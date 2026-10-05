@@ -16,7 +16,7 @@ There are no external mod dependencies. The current container choices are the va
 
 ## Packaging for in-game testing
 
-Run `python3 package_mod.py` to build and install the ZIP at `~/Programs/factorio/mods/container-with-ghost-items_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from `info.json`, includes runtime files and locale files, and atomically replaces the ZIP if it already exists.
+Run `python3 package_mod.py` to build and install the ZIP at `~/Programs/factorio/mods/container-with-ghost-items_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from `info.json`, includes runtime files and locale files under a versioned top-level folder inside the ZIP, and atomically replaces the ZIP if it already exists. Factorio requires a mod folder inside the archive; the zip filename alone is not enough.
 
 Keep interface text in locale files. Keep calculations independent from GUI event handling where practical so capacity and recipe behavior can be reviewed without tracing rendering code.
 

@@ -40,7 +40,8 @@ def package(destination: Path) -> Path:
     try:
         with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
             for path in sorted(files):
-                bundle.write(path, path.relative_to(ROOT).as_posix())
+                archive_path = Path(f"{name}_{version}") / path.relative_to(ROOT)
+                bundle.write(path, archive_path.as_posix())
         temporary.replace(archive)
     finally:
         temporary.unlink(missing_ok=True)

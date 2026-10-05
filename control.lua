@@ -64,6 +64,39 @@ local function translated(key)
   return { "container-ghost-items." .. key }
 end
 
+local function selected_prototype_name(value)
+  if type(value) == "string" then return value end
+  if value then
+    local ok, name = pcall(function() return value.name end)
+    if ok and type(name) == "string" then return name end
+  end
+end
+
+local function selected_quality_name(value)
+  local name = selected_prototype_name(value)
+  return name or "normal"
+end
+
+local function quality_from_selection(value)
+  if value then
+    local ok, quality = pcall(function() return value.quality end)
+    if ok and quality then return selected_quality_name(quality) end
+  end
+  return "normal"
+end
+
+local function safe_field(value, key)
+  if not value then return nil end
+  local ok, result = pcall(function() return value[key] end)
+  if ok then return result end
+end
+
+local function debug_string(value)
+  if value == nil then return "<nil>" end
+  local ok, result = pcall(tostring, value)
+  return ok and result or "<unprintable>"
+end
+
 local function add(parent, spec)
   return parent.add(spec)
 end
@@ -83,7 +116,7 @@ end
 local function container_options()
   local result = {}
   for _, name in ipairs(vanilla_containers) do
-    local prototype = game.entity_prototypes[name]
+    local prototype = prototypes.entity[name]
     if prototype then
       local inventory_size
       local ok, size = pcall(function()
@@ -117,7 +150,7 @@ local function totals_for(line)
   local totals = {}
   for _, root in ipairs(line.roots) do
     walk_node(root, function(node)
-      if game.item_prototypes[node.item] then
+      if prototypes.item[node.item] then
         local key = node.item .. "\0" .. (node.quality or "normal")
         totals[key] = (totals[key] or 0) + node.amount * multiplier
       end
@@ -137,7 +170,7 @@ local function capacity_for(line, totals)
   for key, amount in pairs(totals) do
     if not line.filtered[key] then
       local name = key:match("^(.-)%z")
-      local item = game.item_prototypes[name]
+      local item = prototypes.item[name]
       local stack_size = item and item.stack_size or 1
       slots_needed = slots_needed + math.ceil(amount / stack_size)
     end
@@ -198,7 +231,7 @@ local function render_total_column(parent, line)
         quality = quality,
         number = amount, style = "slot_button", enabled = true,
         auto_toggle = true, toggled = line.filtered[key] or false,
-        tooltip = { "", game.item_prototypes[name].localised_name, " × ", amount,
+        tooltip = { "", prototypes.item[name].localised_name, " × ", amount,
           "\n", enabled and translated("filter-item") or translated("include-item") },
         tags = { action = "toggle-filter", line_id = line.id, item = name, quality = quality, filtered = not enabled }
       })
@@ -405,7 +438,9 @@ local function render_modal(player)
     direction = "vertical", auto_center = true
   })
   if modal.kind == "item" then
-    local row = add(frame, { type = "flow", direction = "horizontal" })
+    local row = add(frame, {
+      type = "flow", name = "cgi_modal_item_row", direction = "horizontal"
+    })
     add(row, { type = "label", caption = translated("item") })
     local chooser = add(row, {
       type = "choose-elem-button", name = "cgi_modal_item", elem_type = "item-with-quality",
@@ -458,13 +493,13 @@ local function ingredient_amount(ingredient)
 end
 
 local function make_recipe_children(data, node, recipe_name)
-  local recipe = game.recipe_prototypes[recipe_name]
+  local recipe = prototypes.recipe[recipe_name]
   local output_amount = recipe and recipe_output_amount(recipe, node.item)
   if not output_amount or output_amount <= 0 then return false end
   local crafts = math.ceil(node.amount / output_amount)
   local children = {}
   for _, ingredient in ipairs(recipe.ingredients or {}) do
-    if (ingredient.type == nil or ingredient.type == "item") and game.item_prototypes[ingredient.name] then
+    if (ingredient.type == nil or ingredient.type == "item") and prototypes.item[ingredient.name] then
       local amount = ingredient_amount(ingredient) * crafts
       if amount > 0 then
         table.insert(children, {
@@ -555,7 +590,7 @@ local function create_blueprint(player, line)
   for _, key in ipairs(sorted_item_names(items)) do
     local name, quality = key:match("^(.-)%z(.*)$")
     local amount = items[key]
-    local stack_size = game.item_prototypes[name].stack_size or 1
+    local stack_size = prototypes.item[name].stack_size or 1
     local positions = {}
     while amount > 0 do
       local count = math.min(stack_size, amount)
@@ -654,23 +689,39 @@ local function on_gui_click(event)
     local line = find_line(data, modal.line_id)
     if not line then close_modal(player); return end
     if modal.kind == "item" then
-      local item_button = player.gui.screen[GUI.modal]["cgi_modal_item"]
-      local amount_field = player.gui.screen[GUI.modal]["cgi_modal_amount"]
-      local item = item_button and item_button.elem_value
+      local item_row = player.gui.screen[GUI.modal]["cgi_modal_item_row"]
+      local item_button = item_row and item_row["cgi_modal_item"]
+      local amount_field = item_row and item_row["cgi_modal_amount"]
+      local selected = item_button and item_button.elem_value
+      local item = selected_prototype_name(selected)
       local amount = amount_field and tonumber(amount_field.text)
-      local quality = item and (item.quality or "normal")
-      if not (item and item.name and game.item_prototypes[item.name] and type(quality) == "string"
-        and amount and amount > 0 and amount % 1 == 0) then
+      local quality = selected and quality_from_selection(selected)
+      local raw_quality = safe_field(selected, "quality")
+      local has_item_prototype = item and prototypes.item[item] ~= nil or false
+      local has_quality_prototype = quality and prototypes.quality[quality] ~= nil or false
+      log(string.format(
+        "[Container Ghost Items] item-save selected_type=%s selected=%s selected_name=%s quality_type=%s quality=%s parsed_quality=%s amount_text=%q parsed_amount=%s item_prototype=%s quality_prototype=%s",
+        type(selected), debug_string(selected), debug_string(safe_field(selected, "name")),
+        type(raw_quality), debug_string(raw_quality), debug_string(quality),
+        amount_field and amount_field.text or "<missing>", debug_string(amount),
+        tostring(has_item_prototype), tostring(has_quality_prototype)
+      ))
+      if not (item and prototypes.item[item]) then
+        player.print(translated("invalid-item-selection"))
+        return
+      end
+      if not (amount and amount > 0 and amount % 1 == 0) then
         player.print(translated("invalid-item"))
         return
       end
+      quality = quality or "normal"
       local node
       if modal.node_id then node = find_node({ children = line.roots }, modal.node_id) end
       if node then
-        node.item, node.quality, node.amount = item.name, quality, amount
+        node.item, node.quality, node.amount = item, quality, amount
         node.recipe, node.children = nil, nil
       else
-        table.insert(line.roots, { id = add_node_id(data), item = item.name, quality = quality, amount = amount })
+        table.insert(line.roots, { id = add_node_id(data), item = item, quality = quality, amount = amount })
       end
       close_modal(player)
       redraw_after_change(player)
