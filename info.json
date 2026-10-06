@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "title": "Container Ghost Items",
   "author": "Container Ghost Items contributors",
-  "factorio_version": "2.0",
-  "description": "Plan container contents and generate blueprints with item insertion requests."
+  "factorio_version": "2.1",
+  "description": "Plan container contents and generate blueprints with item insertion requests.",
+  "package": {
+    "ignore": ["devs/*"],
+    "scripts": {
+      "test-deploy": "python3 devs/package_mod.py"
+    }
+  }
 }

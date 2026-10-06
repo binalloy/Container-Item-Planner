@@ -2,21 +2,22 @@
 
 ## Purpose and target
 
-Container Ghost Items is a Factorio 2.0 mod for planning the contents of a chest and producing a blueprint whose chest ghost requests those items. The interface takes broad organizational cues from FactoryPlanner, but this project has its own code and UI. The planner state is per player and is stored in the save.
+Container Ghost Items targets Factorio 2.1 and plans the contents of a chest, then produces a blueprint whose chest ghost requests those items. The interface takes broad organizational cues from FactoryPlanner, but this project has its own code and UI. The planner state is per player and is stored in the save.
 
 There are no external mod dependencies. Container choices are discovered from entity prototypes that expose a non-empty chest inventory, including modded containers. The item-with-quality and container selectors use Factorio's native `choose-elem-button`; the container selector is filtered to those discovered prototypes. Recipes are selected from slot buttons filtered to recipes that directly produce the selected item or fluid, grouped into normal and recycling recipes.
 
 ## Project layout
 
-- `info.json` declares the mod and its Factorio 2.0 target.
+- `info.json` declares the mod and its Factorio 2.1 target.
 - `data.lua` registers the planner toggle key binding.
-- `control.lua` currently owns persisted state, GUI construction and events, recipe expansion, capacity calculation, and blueprint creation. GUI and planner logic have not yet been split into separate modules.
+- `control.lua` registers lifecycle and GUI events and delegates them to `gui.lua`.
+- `gui.lua` builds the planner interface and handles GUI events. `planner.lua` owns persisted planner state, recipe expansion, totals, capacity calculations, and blueprint creation.
 - `locale/en/locale.cfg` contains player-facing text.
 - `package_mod.py` builds `name_version.zip` and deploys it to the Factorio mods folder (or a caller-provided output folder).
 
 ## Packaging for in-game testing
 
-Run `python3 package_mod.py` to build and install the ZIP at `~/Programs/factorio/mods/container-with-ghost-items_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from `info.json`, includes runtime files and locale files under a versioned top-level folder inside the ZIP, and atomically replaces the ZIP if it already exists. Factorio requires a mod folder inside the archive; the zip filename alone is not enough.
+Run `python3 devs/package_mod.py` from the mod root to build and install the ZIP at `~/Programs/factorio/mods/container-with-ghost-items_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from the root `info.json`, includes runtime files and locale files under a versioned top-level folder inside the ZIP, and atomically replaces the ZIP if it already exists. Factorio requires a mod folder inside the archive; the zip filename alone is not enough.
 
 Keep interface text in locale files. Keep calculations independent from GUI event handling where practical so capacity and recipe behavior can be reviewed without tracing rendering code.
 
@@ -79,7 +80,7 @@ Capacity is measured in inventory slots. For each included item-quality pair, re
 
 Construct one blueprint entity with `entity_number = 1`, the selected container prototype name and quality, and position `{0, 0}`. Group counts by item and quality. Split each group into stack-sized chunks, assigning each chunk to the selected entity's chest inventory through `BlueprintEntity.items` / `BlueprintInsertPlan`. Set each insert plan ID's quality to the selected item quality. The inventory stack indexes in `ItemInventoryPositions.in_inventory` are zero-based and must not overlap between item-quality pairs.
 
-Reference: [BlueprintEntity](https://lua-api.factorio.com/latest/concepts/BlueprintEntity.html), [BlueprintInsertPlan](https://lua-api.factorio.com/latest/concepts/BlueprintInsertPlan.html), and [InventoryPosition](https://lua-api.factorio.com/latest/concepts/InventoryPosition.html). These links track the latest API; the implementation targets Factorio 2.0 and should be checked against that exact runtime.
+Reference: [BlueprintEntity](https://lua-api.factorio.com/latest/concepts/BlueprintEntity.html), [BlueprintInsertPlan](https://lua-api.factorio.com/latest/concepts/BlueprintInsertPlan.html), and [InventoryPosition](https://lua-api.factorio.com/latest/concepts/InventoryPosition.html). These links track the latest API; runtime behavior should be checked against the Factorio 2.1 target.
 
 Use the selected item prototype's stack size both for slot validation and for splitting requests. Check capacity again when creating the blueprint, even if the GUI button is disabled, because UI state is not validation. Set the blueprint label from the line title. Create the blueprint on a new blueprint item stack, then deliver it to the cursor or an empty main-inventory slot.
 
@@ -95,7 +96,7 @@ Recipe expansion must have a bounded depth so a cyclic recipe chain cannot creat
 
 ## Validation checklist
 
-The workspace does not currently include a Factorio executable or Lua interpreter, so runtime behavior must be checked in a Factorio 2.0 game with this mod enabled. At minimum, verify:
+The workspace does not currently include a Factorio executable or Lua interpreter, so runtime behavior must be checked in a Factorio 2.1 game with this mod enabled. At minimum, verify:
 
 1. Add, edit, remove, expand, change recipe, collapse, exclude and restore ingredient branches, duplicate, reorder, and delete plan content. Confirm ingredient rows cannot be edited directly.
 2. Save and reload a game; confirm lines and nested expansions persist and multiplayer players see separate plans.
@@ -111,4 +112,4 @@ Also validate that prototype inventory-size lookup and the blueprint insert-plan
 
 ## Current implementation status
 
-The implementation includes recipe filtering and auto-selection, fluid ingredient display, descendant-based totals, branch exclusions, decimal multipliers, chest-inventory prototype discovery, native frame close handling, and Factoriopedia links. GUI construction and planner logic still live in `control.lua`. `git diff --check` has been used for recent changes, but this workspace has no Factorio executable or Lua parser. GUI, save/load, and blueprint behavior must be checked in Factorio 2.0 using the checklist above before publishing.
+The implementation includes recipe filtering and auto-selection, fluid ingredient display, descendant-based totals, branch exclusions, decimal multipliers, chest-inventory prototype discovery, native frame close handling, and Factoriopedia links. GUI handling and planner logic are split across `gui.lua` and `planner.lua`, with event registration in `control.lua`. This workspace has no Factorio executable or Lua parser. GUI, save/load, and blueprint behavior must be checked in Factorio 2.1 using the checklist above before publishing.

@@ -11,9 +11,9 @@ import zipfile
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DESTINATION = Path.home() / "Programs" / "factorio" / "mods"
-REQUIRED_FILES = ("info.json", "data.lua", "control.lua")
+REQUIRED_FILES = ("info.json", "data.lua", "control.lua", "gui.lua", "planner.lua")
 
 
 def package(destination: Path) -> Path:
