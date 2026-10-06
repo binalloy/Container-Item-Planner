@@ -5,11 +5,10 @@ local GUI = {
 }
 
 local MAX_RECIPE_DEPTH = 12
-local vanilla_containers = {
-  "wooden-chest", "iron-chest", "steel-chest",
-  "logistic-chest-active-provider", "logistic-chest-passive-provider",
-  "logistic-chest-storage", "logistic-chest-buffer", "logistic-chest-requester"
-}
+local function has_chest_inventory(prototype)
+  local ok, size = pcall(function() return prototype.get_inventory_size(defines.inventory.chest) end)
+  if ok and size and size > 0 then return size end
+end
 
 local function player_data(player_index)
   storage.cgi_players = storage.cgi_players or {}
@@ -30,7 +29,8 @@ local function new_line(data)
     multiplier_text = "",
     roots = {},
     filtered = {},
-    container = "wooden-chest"
+    container = "wooden-chest",
+    container_quality = "normal"
   }
 end
 
@@ -91,12 +91,6 @@ local function safe_field(value, key)
   if ok then return result end
 end
 
-local function debug_string(value)
-  if value == nil then return "<nil>" end
-  local ok, result = pcall(tostring, value)
-  return ok and result or "<unprintable>"
-end
-
 local function add(parent, spec)
   return parent.add(spec)
 end
@@ -115,32 +109,20 @@ end
 
 local function container_options()
   local result = {}
-  for _, name in ipairs(vanilla_containers) do
-    local prototype = prototypes.entity[name]
-    if prototype then
-      local inventory_size
-      local ok, size = pcall(function()
-        return prototype.get_inventory_size(defines.inventory.chest)
-      end)
-      if ok then inventory_size = size end
-      if not inventory_size or inventory_size == 0 then
-        local fallback_ok, fallback_size = pcall(function()
-          return prototype.inventory_size
-        end)
-        if fallback_ok then inventory_size = fallback_size end
-      end
-      if inventory_size and inventory_size > 0 then
-        table.insert(result, { name = name, label = prototype.localised_name, slots = inventory_size })
-      end
+  for name, prototype in pairs(prototypes.entity) do
+    local inventory_size = has_chest_inventory(prototype)
+    if inventory_size then
+      table.insert(result, { name = name, label = prototype.localised_name, slots = inventory_size })
     end
   end
+  table.sort(result, function(a,b) return a.name < b.name end)
   return result
 end
 
 local function get_multiplier(line)
   if line.multiplier_text == nil or line.multiplier_text == "" then return 1 end
   local value = tonumber(line.multiplier_text)
-  if value and value > 0 and value % 1 == 0 then return value end
+  if value and value > 0 then return value end
   return nil
 end
 
@@ -148,14 +130,16 @@ local function totals_for(line)
   local multiplier = get_multiplier(line)
   if not multiplier then return nil, "multiplier" end
   local totals = {}
-  for _, root in ipairs(line.roots) do
-    walk_node(root, function(node)
-      if prototypes.item[node.item] then
-        local key = node.item .. "\0" .. (node.quality or "normal")
-        totals[key] = (totals[key] or 0) + node.amount * multiplier
-      end
-    end)
+  local function count(node, excluded)
+    if excluded or node.excluded then return end
+    if node.children and #node.children > 0 then
+      for _, child in ipairs(node.children) do count(child, false) end
+    elseif not node.fluid and prototypes.item[node.item] then
+      local key = node.item .. "\0" .. (node.quality or "normal")
+      totals[key] = (totals[key] or 0) + math.ceil(node.amount * multiplier)
+    end
   end
+  for _, root in ipairs(line.roots) do count(root, false) end
   return totals
 end
 
@@ -216,7 +200,7 @@ local function render_total_column(parent, line)
   local totals = totals_for(line) or {}
   local names = sorted_item_names(totals)
   local total_frame = add(parent, {
-    type = "flow", name = "cgi_total_" .. line.id, direction = "vertical",
+    type = "flow", name = "cgi_total_" .. line.id, direction = "horizontal",
     tags = { action = "total-column", line_id = line.id }
   })
   if #names == 0 then
@@ -229,8 +213,7 @@ local function render_total_column(parent, line)
       add(total_frame, {
         type = "sprite-button", sprite = "item/" .. name,
         quality = quality,
-        number = amount, style = "slot_button", enabled = true,
-        auto_toggle = true, toggled = line.filtered[key] or false,
+        number = amount, style = line.filtered[key] and "red_slot_button" or "slot_button", enabled = true,
         tooltip = { "", prototypes.item[name].localised_name, " × ", amount,
           "\n", enabled and translated("filter-item") or translated("include-item") },
         tags = { action = "toggle-filter", line_id = line.id, item = name, quality = quality, filtered = not enabled }
@@ -240,21 +223,25 @@ local function render_total_column(parent, line)
   return total_frame
 end
 
-local function render_node(parent, line, node, depth)
+local function render_node(parent, line, node, depth, ancestor_excluded)
+  local excluded = ancestor_excluded or node.excluded or false
   local row = add(parent, { type = "flow", direction = "horizontal" })
   local tooltip = node.children
     and translated("expanded-help")
     or translated("expand-help")
+  local button_style = excluded and "red_slot_button"
+    or (node.recipe and "green_slot_button" or "slot_button")
   add(row, {
     type = "sprite-button", name = "cgi_node_" .. node.id,
-    sprite = "item/" .. node.item, quality = node.quality or "normal", number = node.amount, style = "slot_button",
+    sprite = (node.fluid and "fluid/" or "item/") .. node.item, quality = node.quality or "normal", number = node.amount,
+    style = button_style,
     tooltip = tooltip,
-    tags = { action = "item-node", line_id = line.id, node_id = node.id, depth = depth }
+    tags = { action = "item-node", line_id = line.id, node_id = node.id, depth = depth, fluid = node.fluid or false, excluded = excluded }
   })
   if node.children and #node.children > 0 then
     add(row, { type = "line", direction = "vertical" })
     for _, child in ipairs(node.children) do
-      render_node(row, line, child, depth + 1)
+      render_node(row, line, child, depth + 1, excluded)
     end
   end
   return row
@@ -312,9 +299,10 @@ local function render_line(parent, data, line)
   add(multiplier_panel, { type = "label", caption = translated("multiplier") })
   add(multiplier_panel, {
     type = "textfield", name = "cgi_multiplier_" .. line.id,
-    text = line.multiplier_text or "", numeric = true, allow_decimal = false,
+    text = line.multiplier_text or "", numeric = true, allow_decimal = true,
     allow_negative = false, tags = { action = "multiplier", line_id = line.id }
   })
+  multiplier_panel["cgi_multiplier_" .. line.id].style.width = 90
   add(body, { type = "line", direction = "vertical" })
 
   local total_panel = add(body, {
@@ -335,24 +323,28 @@ local function render_line(parent, data, line)
   })
   container_panel.style.width = 200
   add(container_panel, { type = "label", caption = translated("container") })
-  local options, names, selected = container_options(), {}, 0
-  for index, option in ipairs(options) do
-    table.insert(names, option.label)
-    if option.name == line.container then selected = index end
-  end
-  if #names > 0 then
-    add(container_panel, {
-      type = "drop-down", name = "cgi_container_" .. line.id,
-      items = names, selected_index = selected,
+  local container_controls = add(container_panel, {
+    type = "flow", name = "cgi_container_controls_" .. line.id, direction = "horizontal"
+  })
+  local options, names = container_options(), {}
+  for _, option in ipairs(options) do names[#names + 1] = option.name end
+  if #options > 0 then
+    local chooser = add(container_controls, {
+      type = "choose-elem-button", name = "cgi_container_" .. line.id,
+      elem_type = "entity-with-quality",
+      elem_filters = { { filter = "name", name = names } },
       tags = { action = "container", line_id = line.id }
     })
+    chooser.elem_value = {
+      name = line.container, quality = line.container_quality or "normal"
+    }
   else
-    add(container_panel, { type = "label", caption = translated("no-container") })
+    add(container_controls, { type = "label", caption = translated("no-container") })
   end
   local capacity_ok, blueprint_tooltip = blueprint_state(line)
-  add(container_panel, {
-    type = "button", name = "cgi_blueprint_" .. line.id,
-    caption = translated("blueprint"),
+  add(container_controls, {
+    type = "sprite-button", name = "cgi_blueprint_" .. line.id,
+    sprite = "item/blueprint", style = "slot_button",
     enabled = capacity_ok, tooltip = blueprint_tooltip,
     tags = { action = "blueprint", line_id = line.id }
   })
@@ -363,20 +355,28 @@ local function render_main(player)
   if gui[GUI.frame] and gui[GUI.frame].valid then gui[GUI.frame].destroy() end
   local data = player_data(player.index)
   local frame = add(gui, {
-    type = "frame", name = GUI.frame, caption = translated("title"),
+    type = "frame", name = GUI.frame, caption = "",
     direction = "vertical", auto_center = true
   })
   frame.style.minimal_width = 1050
   local header = add(frame, { type = "flow", direction = "horizontal" })
-  local spacer = add(header, { type = "empty-widget" })
+  header.style.horizontal_spacing = 8
+  header.drag_target = frame
+  local title = add(header, { type = "label", caption = translated("title"), style = "frame_title" })
+  title.ignored_by_interaction = true
+  local spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
+  spacer.style.height = 24
   spacer.style.horizontally_stretchable = true
+  spacer.style.right_margin = 4
+  spacer.ignored_by_interaction = true
   add(header, {
-    type = "button", caption = "×",
-    tooltip = translated("close"),
-    tags = { action = "close" }
+    type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
+    tooltip = translated("close"), tags = { action = "close" }
   })
-  add(frame, { type = "line" })
-  local scroll = add(frame, {
+  local content = add(frame, {
+    type = "frame", name = "cgi_main_content", direction = "vertical", style = "inside_shallow_frame_with_padding"
+  })
+  local scroll = add(content, {
     type = "scroll-pane", name = "cgi_scroll", direction = "vertical"
   })
   scroll.style.maximal_height = 700
@@ -384,7 +384,7 @@ local function render_main(player)
   if #data.lines == 0 then
     add(scroll, { type = "label", caption = translated("empty-lines") })
   end
-  add(frame, {
+  add(content, {
     type = "button", caption = translated("add-line"),
     tags = { action = "add-line" }
   })
@@ -394,7 +394,8 @@ end
 local function update_line_calculations(player, line)
   local main = player.gui.screen[GUI.frame]
   if not (main and main.valid) then return end
-  local scroll = main["cgi_scroll"]
+  local content = main["cgi_main_content"]
+  local scroll = content and content["cgi_scroll"]
   local card = scroll and scroll["cgi_line_" .. line.id]
   local body = card and card["cgi_body_" .. line.id]
   local total_panel = body and body["cgi_total_panel_" .. line.id]
@@ -410,7 +411,8 @@ local function update_line_calculations(player, line)
   end
 
   local container_panel = body["cgi_container_panel_" .. line.id]
-  local blueprint_button = container_panel and container_panel["cgi_blueprint_" .. line.id]
+  local controls = container_panel and container_panel["cgi_container_controls_" .. line.id]
+  local blueprint_button = controls and controls["cgi_blueprint_" .. line.id]
   if blueprint_button then
     local enabled, tooltip = blueprint_state(line)
     blueprint_button.enabled = enabled
@@ -423,6 +425,8 @@ local function close_modal(player)
     player.gui.screen[GUI.modal].destroy()
   end
   player_data(player.index).modal = nil
+  local main = player.gui.screen[GUI.frame]
+  if main and main.valid then main.enabled = true end
 end
 
 local function render_modal(player)
@@ -432,13 +436,41 @@ local function render_modal(player)
   local data = player_data(player.index)
   local modal = data.modal
   if not modal then return end
+  local main = player.gui.screen[GUI.frame]
+  if main and main.valid then main.enabled = false end
   local frame = add(player.gui.screen, {
     type = "frame", name = GUI.modal,
-    caption = modal.kind == "recipe" and translated("choose-recipe") or translated("add-item"),
+    caption = modal.kind == "recipe" and "" or translated("add-item"),
     direction = "vertical", auto_center = true
   })
+  local recipe_content = frame
+  local item_content = frame
+  if modal.kind == "recipe" then
+    local header = add(frame, { type = "flow", direction = "horizontal" })
+    header.style.horizontal_spacing = 8
+    header.drag_target = frame
+    local title = add(header, { type = "label", caption = translated("recipe-dialog-title"), style = "frame_title" })
+    title.ignored_by_interaction = true
+    local spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
+    spacer.style.height = 24
+    spacer.style.horizontally_stretchable = true
+    spacer.style.right_margin = 4
+    spacer.ignored_by_interaction = true
+    local content = add(frame, { type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding" })
+    add(header, {
+      type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
+      tooltip = translated("close"), tags = { action = "modal-cancel" }
+    })
+    add(content, { type = "label", caption = translated("choose-recipe") })
+    recipe_content = content
+  else
+    item_content = add(frame, {
+      type = "frame", name = "cgi_item_dialog_content", direction = "vertical",
+      style = "inside_shallow_frame_with_padding"
+    })
+  end
   if modal.kind == "item" then
-    local row = add(frame, {
+    local row = add(item_content, {
       type = "flow", name = "cgi_modal_item_row", direction = "horizontal"
     })
     add(row, { type = "label", caption = translated("item") })
@@ -453,28 +485,67 @@ local function render_modal(player)
       numeric = true, allow_decimal = false, allow_negative = false
     })
   else
-    add(frame, { type = "label", caption = translated("no-recipe") })
-    add(frame, {
-      type = "choose-elem-button", name = "cgi_modal_recipe", elem_type = "recipe",
-      recipe = modal.recipe, tags = { action = "modal-recipe" }
+    local normal, recycling = {}, {}
+    for _, name in ipairs(modal.options) do
+      local recipe = prototypes.recipe[name]
+      local categories = recipe and safe_field(recipe, "categories") or nil
+      local is_recycling = false
+      if categories then
+        for _, category in ipairs(categories) do
+          if category == "recycling" then is_recycling = true; break end
+        end
+      elseif recipe and safe_field(recipe, "category") == "recycling" then
+        is_recycling = true
+      end
+      if is_recycling then
+        recycling[#recycling + 1] = name
+      else
+        normal[#normal + 1] = name
+      end
+    end
+    local function add_recipe_group(title, recipes)
+      if #recipes == 0 then return end
+      add(recipe_content, { type = "label", caption = translated(title) })
+      local grid = add(recipe_content, { type = "table", column_count = 6 })
+      for _, name in ipairs(recipes) do
+        local recipe = prototypes.recipe[name]
+        add(grid, {
+          type = "sprite-button", sprite = "recipe/" .. name, style = "slot_button",
+          tooltip = recipe and recipe.localised_name or name,
+          toggled = modal.selected_recipe == name,
+          tags = { action = "recipe-choice", recipe = name }
+        })
+      end
+    end
+    add_recipe_group("normal-recipes", normal)
+    add_recipe_group("recycling-recipes", recycling)
+  end
+  if modal.kind == "item" then
+    add(frame, { type = "line" })
+    local buttons = add(frame, { type = "flow", direction = "horizontal" })
+    buttons.style.horizontally_stretchable = true
+    buttons.style.horizontal_spacing = 8
+    buttons.style.top_padding = 8
+    buttons.drag_target = frame
+    add(buttons, {
+      type = "button", caption = translated("cancel"), style = "back_button",
+      tags = { action = "modal-cancel" }
+    })
+    local spacer = add(buttons, { type = "empty-widget", style = "draggable_space" })
+    spacer.style.height = 32
+    spacer.style.horizontally_stretchable = true
+    spacer.drag_target = frame
+    add(buttons, {
+      type = "button", caption = translated("confirm"), style = "confirm_button",
+      tags = { action = "modal-save" }
     })
   end
-  add(frame, { type = "line" })
-  local buttons = add(frame, { type = "flow", direction = "horizontal" })
-  add(buttons, {
-    type = "button", caption = translated("save"),
-    tags = { action = "modal-save" }
-  })
-  add(buttons, {
-    type = "button", caption = translated("cancel"),
-    tags = { action = "modal-cancel" }
-  })
   player.opened = frame
 end
 
 local function recipe_output_amount(recipe, item_name)
   for _, product in ipairs(recipe.products or {}) do
-    if (product.type == nil or product.type == "item") and product.name == item_name then
+    if product.name == item_name then
       local amount = product.amount
       if not amount then
         amount = ((product.amount_min or product.amount_max or 1) + (product.amount_max or product.amount_min or 1)) / 2
@@ -482,6 +553,15 @@ local function recipe_output_amount(recipe, item_name)
       return amount * (product.probability or 1)
     end
   end
+end
+
+local function recipe_matches(recipe_name, item_name)
+  local recipe = prototypes.recipe[recipe_name]
+  if not recipe then return false end
+  for _, product in ipairs(recipe.products or {}) do
+    if product.name == item_name then return true end
+  end
+  return false
 end
 
 local function ingredient_amount(ingredient)
@@ -497,14 +577,29 @@ local function make_recipe_children(data, node, recipe_name)
   local output_amount = recipe and recipe_output_amount(recipe, node.item)
   if not output_amount or output_amount <= 0 then return false end
   local crafts = math.ceil(node.amount / output_amount)
+  local old_children = node.children or {}
   local children = {}
   for _, ingredient in ipairs(recipe.ingredients or {}) do
-    if (ingredient.type == nil or ingredient.type == "item") and prototypes.item[ingredient.name] then
+    if ((ingredient.type == nil or ingredient.type == "item") and prototypes.item[ingredient.name]) or (ingredient.type == "fluid" and prototypes.fluid[ingredient.name]) then
       local amount = ingredient_amount(ingredient) * crafts
       if amount > 0 then
-        table.insert(children, {
-          id = add_node_id(data), item = ingredient.name, quality = node.quality or "normal", amount = amount
-        })
+        local fluid = ingredient.type == "fluid"
+        local child
+        for index, previous in ipairs(old_children) do
+          if previous.item == ingredient.name and (previous.fluid or false) == fluid then
+            child = previous
+            table.remove(old_children, index)
+            break
+          end
+        end
+        if child then
+          child.amount = amount
+          child.quality = node.quality or "normal"
+          if child.recipe and recipe_matches(child.recipe, child.item) then make_recipe_children(data, child, child.recipe) end
+        else
+          child = { id = add_node_id(data), item = ingredient.name, quality = node.quality or "normal", amount = amount, fluid = fluid }
+        end
+        table.insert(children, child)
       end
     end
   end
@@ -526,9 +621,17 @@ local function set_modal_for_recipe(player, line_id, node)
   local data = player_data(player.index)
   local line = find_line(data, line_id)
   if not line then return end
+  local options = {}
+  for name in pairs(prototypes.recipe) do if recipe_matches(name, node.item) then options[#options + 1] = name end end
+  table.sort(options)
+  if #options == 0 then player.print(translated("no-matching-recipes")); return end
+  if #options == 1 then
+    if make_recipe_children(data, node, options[1]) then redraw_after_change(player) end
+    return
+  end
   data.modal = {
-    kind = "recipe", line_id = line_id, node_id = node.id,
-    item = node.item, recipe = node.recipe
+    kind = "recipe", line_id = line_id, node_id = node.id, item = node.item,
+    recipe = node.recipe, selected_recipe = nil, options = options
   }
   render_modal(player)
 end
@@ -616,6 +719,7 @@ local function create_blueprint(player, line)
     {
       entity_number = 1,
       name = chest,
+      quality = line.container_quality or "normal",
       position = { 0, 0 },
       items = insert_plans
     }
@@ -668,6 +772,7 @@ local function on_gui_click(event)
       copy.title = (line.title or "Plan") .. " copy"
       copy.multiplier_text = line.multiplier_text
       copy.container = line.container
+      copy.container_quality = line.container_quality or "normal"
       copy.filtered = {}
       for name, filtered in pairs(line.filtered or {}) do copy.filtered[name] = filtered end
       for _, root in ipairs(line.roots) do table.insert(copy.roots, clone_node(data, root)) end
@@ -680,6 +785,21 @@ local function on_gui_click(event)
     redraw_after_change(player)
   elseif action == "add-item" then
     set_modal_for_item(player, tags.line_id, nil)
+  elseif action == "recipe-choice" then
+    local modal = data.modal
+    if modal and modal.kind == "recipe" and event.button == defines.mouse_button_type.left then
+      if event.alt then
+        local recipe = prototypes.recipe[tags.recipe]
+        if recipe then player.open_factoriopedia_gui(recipe) end
+      elseif recipe_matches(tags.recipe, modal.item) then
+        local line = find_line(data, modal.line_id)
+        local node = line and find_node({ children = line.roots }, modal.node_id)
+        if node and make_recipe_children(data, node, tags.recipe) then
+          close_modal(player)
+          redraw_after_change(player)
+        end
+      end
+    end
   elseif action == "modal-cancel" then
     close_modal(player)
     if player.gui.screen[GUI.frame] then player.opened = player.gui.screen[GUI.frame] end
@@ -689,23 +809,15 @@ local function on_gui_click(event)
     local line = find_line(data, modal.line_id)
     if not line then close_modal(player); return end
     if modal.kind == "item" then
-      local item_row = player.gui.screen[GUI.modal]["cgi_modal_item_row"]
+      local modal_frame = player.gui.screen[GUI.modal]
+      local content = modal_frame and modal_frame["cgi_item_dialog_content"]
+      local item_row = content and content["cgi_modal_item_row"]
       local item_button = item_row and item_row["cgi_modal_item"]
       local amount_field = item_row and item_row["cgi_modal_amount"]
       local selected = item_button and item_button.elem_value
       local item = selected_prototype_name(selected)
       local amount = amount_field and tonumber(amount_field.text)
       local quality = selected and quality_from_selection(selected)
-      local raw_quality = safe_field(selected, "quality")
-      local has_item_prototype = item and prototypes.item[item] ~= nil or false
-      local has_quality_prototype = quality and prototypes.quality[quality] ~= nil or false
-      log(string.format(
-        "[Container Ghost Items] item-save selected_type=%s selected=%s selected_name=%s quality_type=%s quality=%s parsed_quality=%s amount_text=%q parsed_amount=%s item_prototype=%s quality_prototype=%s",
-        type(selected), debug_string(selected), debug_string(safe_field(selected, "name")),
-        type(raw_quality), debug_string(raw_quality), debug_string(quality),
-        amount_field and amount_field.text or "<missing>", debug_string(amount),
-        tostring(has_item_prototype), tostring(has_quality_prototype)
-      ))
       if not (item and prototypes.item[item]) then
         player.print(translated("invalid-item-selection"))
         return
@@ -718,18 +830,22 @@ local function on_gui_click(event)
       local node
       if modal.node_id then node = find_node({ children = line.roots }, modal.node_id) end
       if node then
+        local changed_selection = node.item ~= item or (node.quality or "normal") ~= quality
         node.item, node.quality, node.amount = item, quality, amount
-        node.recipe, node.children = nil, nil
+        if changed_selection then
+          node.recipe, node.children = nil, nil
+        elseif node.recipe then
+          make_recipe_children(data, node, node.recipe)
+        end
       else
         table.insert(line.roots, { id = add_node_id(data), item = item, quality = quality, amount = amount })
       end
       close_modal(player)
       redraw_after_change(player)
     else
-      local recipe_button = player.gui.screen[GUI.modal]["cgi_modal_recipe"]
-      local recipe = recipe_button and recipe_button.elem_value
+      local recipe = modal.selected_recipe
       local node = find_node({ children = line.roots }, modal.node_id)
-      if not (recipe and node and make_recipe_children(data, node, recipe)) then
+      if not (recipe and node and recipe_matches(recipe, node.item) and make_recipe_children(data, node, recipe)) then
         player.print(translated("invalid-recipe"))
         return
       end
@@ -741,7 +857,10 @@ local function on_gui_click(event)
     if not line then return end
     local node = find_node({ children = line.roots }, tags.node_id)
     if not node then return end
-    if event.control and event.button == defines.mouse_button_type.right then
+    if event.alt and event.button == defines.mouse_button_type.left then
+      local prototype = tags.fluid and prototypes.fluid[node.item] or prototypes.item[node.item]
+      if prototype then player.open_factoriopedia_gui(prototype) end
+    elseif event.control and event.button == defines.mouse_button_type.right then
       node.recipe, node.children = nil, nil
       redraw_after_change(player)
     elseif event.control then
@@ -751,6 +870,11 @@ local function on_gui_click(event)
         set_modal_for_recipe(player, tags.line_id, node)
       end
     elseif event.button == defines.mouse_button_type.right then
+      if (tags.depth or 0) > 0 then
+        node.excluded = not node.excluded
+        redraw_after_change(player)
+        return
+      end
       local function remove_node(siblings, id)
         for index, candidate in ipairs(siblings) do
           if candidate.id == id then table.remove(siblings, index); return true end
@@ -760,15 +884,22 @@ local function on_gui_click(event)
       end
       remove_node(line.roots, node.id)
       redraw_after_change(player)
+    elseif (tags.depth or 0) > 0 then
+      return
     else
       set_modal_for_item(player, tags.line_id, node)
     end
   elseif action == "toggle-filter" then
     local line = find_line(data, tags.line_id)
     if line and event.button == defines.mouse_button_type.left then
-      local key = tags.item .. "\0" .. (tags.quality or "normal")
-      line.filtered[key] = not line.filtered[key]
-      redraw_after_change(player)
+      if event.alt then
+        local item = prototypes.item[tags.item]
+        if item then player.open_factoriopedia_gui(item) end
+      else
+        local key = tags.item .. "\0" .. (tags.quality or "normal")
+        line.filtered[key] = not line.filtered[key]
+        redraw_after_change(player)
+      end
     end
   elseif action == "blueprint" then
     local line = find_line(data, tags.line_id)
@@ -776,15 +907,21 @@ local function on_gui_click(event)
   end
 end
 
-local function on_gui_selection_state_changed(event)
+local function on_gui_elem_changed(event)
   local element = event.element
   if not (element and element.valid) then return end
   local tags = element.tags or {}
   if tags.action == "container" then
     local line = find_line(player_data(event.player_index), tags.line_id)
-    local option = container_options()[element.selected_index]
-    if line and option then
-      line.container = option.name
+    local selected = element.elem_value
+    local selected_name = selected_prototype_name(selected)
+    local available = false
+    for _, option in ipairs(container_options()) do
+      if option.name == selected_name then available = true; break end
+    end
+    if line and available then
+      line.container = selected_name
+      line.container_quality = quality_from_selection(selected)
       render_main(game.get_player(event.player_index))
     end
   end
@@ -847,8 +984,30 @@ end)
 script.on_event(defines.events.on_player_created, on_player_created)
 script.on_event(defines.events.on_player_joined_game, on_player_joined)
 script.on_event(defines.events.on_gui_click, on_gui_click)
-script.on_event(defines.events.on_gui_selection_state_changed, on_gui_selection_state_changed)
+script.on_event(defines.events.on_gui_elem_changed, on_gui_elem_changed)
 script.on_event(defines.events.on_gui_text_changed, on_gui_text_changed)
+script.on_event(defines.events.on_gui_closed, function(event)
+  local player = game.get_player(event.player_index)
+  if player and event.element and event.element.valid then
+    local modal = player.gui.screen[GUI.modal]
+    if event.element.name == GUI.modal then
+      if not (modal and modal.valid and player.opened == modal) then
+        close_modal(player)
+        local main = player.gui.screen[GUI.frame]
+        if main and main.valid then player.opened = main else player.opened = nil end
+      end
+    elseif event.element.name == GUI.frame then
+      -- The main frame is closed when player.opened switches to the modal.
+      -- Modal state is the reliable signal that this is an intentional handoff.
+      if not player_data(player.index).modal then
+        close_modal(player)
+        local main = player.gui.screen[GUI.frame]
+        if main and main.valid then main.destroy() end
+        player.opened = nil
+      end
+    end
+  end
+end)
 script.on_event("container-ghost-items-toggle", function(event)
   local player = game.get_player(event.player_index)
   if player then on_open_button(player) end

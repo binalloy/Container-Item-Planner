@@ -6,3 +6,8 @@ data:extend({
     action = "lua"
   }
 })
+
+data.raw["gui-style"].default.green_slot_button = {
+  type = "button_style",
+  parent = "green_slot"
+}
