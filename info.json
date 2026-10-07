@@ -1,8 +1,8 @@
 {
-  "name": "container-with-ghost-items",
+  "name": "container-item-planner",
   "version": "0.1.0",
-  "title": "Container Ghost Items",
-  "author": "Container Ghost Items contributors",
+  "title": "Container Item Planner",
+  "author": "Container Item Planner contributors",
   "factorio_version": "2.1",
   "description": "Plan container contents and generate blueprints with item insertion requests.",
   "package": {

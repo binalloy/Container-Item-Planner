@@ -2,14 +2,14 @@
 
 ## Purpose and target
 
-Container Ghost Items targets Factorio 2.1 and plans the contents of a chest, then produces a blueprint whose chest ghost requests those items. The interface takes broad organizational cues from FactoryPlanner, but this project has its own code and UI. The planner state is per player and is stored in the save.
+Container Item Planner targets Factorio 2.1 and plans the contents of a chest, then produces a blueprint whose chest ghost requests those items. The interface takes broad organizational cues from FactoryPlanner, but this project has its own code and UI. The planner state is per player and is stored in the save.
 
 There are no external mod dependencies. Container choices are discovered from entity prototypes that expose a non-empty chest inventory, including modded containers. The item-with-quality and container selectors use Factorio's native `choose-elem-button`; the container selector is filtered to those discovered prototypes. Recipes are selected from slot buttons filtered to recipes that directly produce the selected item or fluid, grouped into normal and recycling recipes.
 
 ## Project layout
 
 - `info.json` declares the mod and its Factorio 2.1 target.
-- `data.lua` registers the planner toggle key binding.
+- `data.lua` registers the planner toggle key binding and shortcut bar button.
 - `control.lua` registers lifecycle and GUI events and delegates them to `gui.lua`.
 - `gui.lua` builds the planner interface and handles GUI events. `planner.lua` owns persisted planner state, recipe expansion, totals, capacity calculations, and blueprint creation.
 - `locale/en/locale.cfg` contains player-facing text.
@@ -17,17 +17,19 @@ There are no external mod dependencies. Container choices are discovered from en
 
 ## Packaging for in-game testing
 
-Run `python3 devs/package_mod.py` from the mod root to build and install the ZIP at `~/Programs/factorio/mods/container-with-ghost-items_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from the root `info.json`, includes runtime files and locale files under a versioned top-level folder inside the ZIP, and atomically replaces the ZIP if it already exists. Factorio requires a mod folder inside the archive; the zip filename alone is not enough.
+Run `python3 devs/package_mod.py` from the mod root to build and install the ZIP at `~/Programs/factorio/mods/container-item-planner_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from the root `info.json`, includes runtime files and locale files under a versioned top-level folder inside the ZIP, and atomically replaces the ZIP if it already exists. Factorio requires a mod folder inside the archive; the zip filename alone is not enough.
 
 Keep interface text in locale files. Keep calculations independent from GUI event handling where practical so capacity and recipe behavior can be reviewed without tracing rendering code.
 
 ## Player workflow
 
-Open the planner with the top-bar **Container Planner** button or `Ctrl+Shift+B`. A player can create any number of plan lines, edit their titles, duplicate or delete them, and move them up or down. Each line is an independent plan.
+Open the planner with its shortcut bar button or `Ctrl+Shift+B`. A player can create any number of plan lines, edit their titles, duplicate or delete them, and move them up or down. Each line is an independent plan.
+
+The shortcut icon layers an iron chest over the blueprint at scale `0.166`. The blueprint icon's default scale is `0.25`; this overlay scale produces the intended chest size. Keep the main and small shortcut icon layers in sync.
 
 Add an item with its requested count in the item dialog. Left-click a root item to edit it and right-click to remove it. Ctrl-left-click chooses a directly producing recipe and expands its ingredients; a single matching recipe is selected automatically and no match is reported. When several recipes match, choose one from the normal or recycling recipe slot-button group; selecting a recipe applies it and closes the dialog. Expanded item buttons use `green_slot_button`. On any expanded row, Ctrl-left-click changes the recipe and Ctrl-right-click removes that expansion. Recipe expansion is manual at each level. Ingredient rows are read-only: right-click toggles exclusion of the ingredient and its full descendant branch. Excluded rows are shown in red. Fluid ingredients are displayed and can be expanded, but are omitted from item totals and blueprints. Alt-left-click an item, fluid, recipe slot, or total item to open its Factoriopedia entry.
 
-Each line has its own positive decimal multiplier, selected container and container quality, and item filters. The container chooser uses entity quality selection and only lists entities with a usable chest inventory. An empty multiplier means 1. Each counted item contribution is multiplied and rounded up before contributions are aggregated by item and quality. Clicking an item-quality pair in the totals toggles that pair out of or back into the generated blueprint. A plan can generate a blueprint only when its included items fit the selected container.
+Each line has its own positive decimal multiplier, selected container and container quality, and item filters. New lines use the per-player default container and quality, initially iron chest at normal quality. The container chooser uses entity quality selection and only lists entities with a usable chest inventory. An empty multiplier means 1. Each counted item contribution is multiplied and rounded up before contributions are aggregated by item and quality. Clicking an item-quality pair in the totals toggles that pair out of or back into the generated blueprint. A plan can generate a blueprint only when its included items fit the selected container.
 
 The generated blueprint contains one container at the origin. Blueprint item requests are attached to that blueprint entity. Deliver the blueprint to an empty cursor stack; if the cursor is occupied, use the first empty slot in the player's main inventory. Report failure if neither destination is available.
 
@@ -39,7 +41,9 @@ Store mutable planner data in Factorio's persisted `storage` table, indexed by p
 storage.cgi_players[player_index] = {
   lines = { line, ... },
   next_line_id = integer,
-  next_node_id = integer
+  next_node_id = integer,
+  default_container = entity prototype name, -- defaults to iron-chest
+  default_container_quality = quality prototype name -- defaults to normal
 }
 
 line = {

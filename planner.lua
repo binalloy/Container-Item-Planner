@@ -12,6 +12,8 @@ local function player_data(player_index)
     data = { lines = {}, next_line_id = 1, next_node_id = 1 }
     storage.cgi_players[player_index] = data
   end
+  data.default_container = data.default_container or "iron-chest"
+  data.default_container_quality = data.default_container_quality or "normal"
   return data
 end
 
@@ -24,8 +26,8 @@ local function new_line(data)
     multiplier_text = "",
     roots = {},
     filtered = {},
-    container = "wooden-chest",
-    container_quality = "normal"
+    container = data.default_container or "iron-chest",
+    container_quality = data.default_container_quality or "normal"
   }
 end
 

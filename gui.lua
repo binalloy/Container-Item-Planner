@@ -1,5 +1,4 @@
 local GUI = {
-  button = "cgi_open_button",
   frame = "cgi_main_frame",
   modal = "cgi_modal_frame"
 }
@@ -32,7 +31,7 @@ local BLUEPRINT_STATUS_MESSAGES = {
 }
 
 local function translated(key)
-  return { "container-ghost-items." .. key }
+  return { "container-item-planner." .. key }
 end
 
 local function selected_prototype_name(value)
@@ -64,6 +63,23 @@ end
 
 local function add(parent, spec)
   return parent.add(spec)
+end
+
+local function add_container_selector(parent, name, action, line_id, container, quality)
+  local options, names = container_options(), {}
+  for _, option in ipairs(options) do names[#names + 1] = option.name end
+  if #options == 0 then
+    add(parent, { type = "label", caption = translated("no-container") })
+    return nil
+  end
+  local chooser = add(parent, {
+    type = "choose-elem-button", name = name,
+    elem_type = "entity-with-quality",
+    elem_filters = { { filter = "name", name = names } },
+    tags = { action = action, line_id = line_id }
+  })
+  chooser.elem_value = { name = container, quality = quality or "normal" }
+  return chooser
 end
 
 local function render_total_column(parent, line)
@@ -196,21 +212,8 @@ local function render_line(parent, data, line)
   local container_controls = add(container_panel, {
     type = "flow", name = "cgi_container_controls_" .. line.id, direction = "horizontal"
   })
-  local options, names = container_options(), {}
-  for _, option in ipairs(options) do names[#names + 1] = option.name end
-  if #options > 0 then
-    local chooser = add(container_controls, {
-      type = "choose-elem-button", name = "cgi_container_" .. line.id,
-      elem_type = "entity-with-quality",
-      elem_filters = { { filter = "name", name = names } },
-      tags = { action = "container", line_id = line.id }
-    })
-    chooser.elem_value = {
-      name = line.container, quality = line.container_quality or "normal"
-    }
-  else
-    add(container_controls, { type = "label", caption = translated("no-container") })
-  end
+  add_container_selector(container_controls, "cgi_container_" .. line.id, "container", line.id,
+    line.container, line.container_quality)
   local blueprint_status = blueprint_state(line)
   add(container_controls, {
     type = "sprite-button", name = "cgi_blueprint_" .. line.id,
@@ -230,9 +233,19 @@ local function render_main(player)
     direction = "vertical", auto_center = true
   })
   frame.style.minimal_width = 1050
-  local header = add(frame, { type = "flow", direction = "horizontal" })
-  header.style.horizontal_spacing = 8
+  local header = add(frame, {
+    type = "flow", direction = "horizontal", style = "frame_header_flow"
+  })
   header.drag_target = frame
+  add(header, {
+    type = "sprite-button", name = "cgi_add_line_button", sprite = "utility/add",
+    style = "cgi_green_titlebar_button", tooltip = translated("add-line"),
+    tags = { action = "add-line" }
+  })
+  local left_spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
+  left_spacer.style.height = 24
+  left_spacer.style.horizontally_stretchable = true
+  left_spacer.ignored_by_interaction = true
   local title = add(header, { type = "label", caption = translated("title"), style = "frame_title" })
   title.ignored_by_interaction = true
   local spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
@@ -240,6 +253,10 @@ local function render_main(player)
   spacer.style.horizontally_stretchable = true
   spacer.style.right_margin = 4
   spacer.ignored_by_interaction = true
+  add(header, {
+    type = "button", caption = translated("settings"), style = "cgi_titlebar_text_button",
+    tooltip = translated("settings"), tags = { action = "settings" }
+  })
   add(header, {
     type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
     tooltip = translated("close"), tags = { action = "close" }
@@ -255,10 +272,6 @@ local function render_main(player)
   if #data.lines == 0 then
     add(scroll, { type = "label", caption = translated("empty-lines") })
   end
-  add(content, {
-    type = "button", caption = translated("add-line"),
-    tags = { action = "add-line" }
-  })
   player.opened = frame
 end
 
@@ -310,29 +323,36 @@ local function render_modal(player)
   local main = player.gui.screen[GUI.frame]
   if main and main.valid then main.enabled = false end
   local frame = add(player.gui.screen, {
-    type = "frame", name = GUI.modal,
-    caption = modal.kind == "recipe" and "" or translated("add-item"),
+    type = "frame", name = GUI.modal, caption = "",
     direction = "vertical", auto_center = true
   })
   local recipe_content = frame
   local item_content = frame
-  if modal.kind == "recipe" then
-    local header = add(frame, { type = "flow", direction = "horizontal" })
-    header.style.horizontal_spacing = 8
-    header.drag_target = frame
-    local title = add(header, { type = "label", caption = translated("recipe-dialog-title"), style = "frame_title" })
-    title.ignored_by_interaction = true
-    local spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
-    spacer.style.height = 24
-    spacer.style.horizontally_stretchable = true
-    spacer.style.right_margin = 4
-    spacer.ignored_by_interaction = true
-    local content = add(frame, { type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding" })
-    add(header, {
-      type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
-      tooltip = translated("close"), tags = { action = "modal-cancel" }
+  local title_key = modal.kind == "recipe" and "recipe-dialog-title"
+    or (modal.kind == "settings" and "settings" or "add-item")
+  local header = add(frame, {
+    type = "flow", direction = "horizontal", style = "frame_header_flow"
+  })
+  header.drag_target = frame
+  local title = add(header, { type = "label", caption = translated(title_key), style = "frame_title" })
+  title.ignored_by_interaction = true
+  local spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
+  spacer.style.height = 24
+  spacer.style.horizontally_stretchable = true
+  spacer.style.right_margin = 4
+  spacer.ignored_by_interaction = true
+  add(header, {
+    type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
+    tooltip = translated("close"), tags = { action = "modal-cancel" }
+  })
+  if modal.kind == "recipe" or modal.kind == "settings" then
+    local content = add(frame, {
+      type = "frame", name = "cgi_dialog_content", direction = "vertical",
+      style = "inside_shallow_frame_with_padding"
     })
-    add(content, { type = "label", caption = translated("choose-recipe") })
+    if modal.kind == "recipe" then
+      add(content, { type = "label", caption = translated("choose-recipe") })
+    end
     recipe_content = content
   else
     item_content = add(frame, {
@@ -355,7 +375,7 @@ local function render_modal(player)
       type = "textfield", name = "cgi_modal_amount", text = tostring(modal.amount or 1),
       numeric = true, allow_decimal = false, allow_negative = false
     })
-  else
+  elseif modal.kind == "recipe" then
     local normal, recycling = {}, {}
     for _, name in ipairs(modal.options) do
       local recipe = prototypes.recipe[name]
@@ -390,13 +410,18 @@ local function render_modal(player)
     end
     add_recipe_group("normal-recipes", normal)
     add_recipe_group("recycling-recipes", recycling)
+  else
+    local row = add(recipe_content, {
+      type = "flow", name = "cgi_default_container_row", direction = "horizontal"
+    })
+    add(row, { type = "label", caption = translated("default-container") })
+    add_container_selector(row, "cgi_default_container", "default-container", nil,
+      modal.container, modal.quality)
   end
-  if modal.kind == "item" then
-    add(frame, { type = "line" })
-    local buttons = add(frame, { type = "flow", direction = "horizontal" })
-    buttons.style.horizontally_stretchable = true
-    buttons.style.horizontal_spacing = 8
-    buttons.style.top_padding = 8
+  if modal.kind == "item" or modal.kind == "settings" then
+    local buttons = add(frame, {
+      type = "flow", direction = "horizontal", style = "dialog_buttons_horizontal_flow"
+    })
     buttons.drag_target = frame
     add(buttons, {
       type = "button", caption = translated("cancel"), style = "back_button",
@@ -446,6 +471,16 @@ local function set_modal_for_recipe(player, line_id, node)
   render_modal(player)
 end
 
+local function set_modal_for_settings(player)
+  local data = player_data(player.index)
+  data.modal = {
+    kind = "settings",
+    container = data.default_container or "iron-chest",
+    quality = data.default_container_quality or "normal"
+  }
+  render_modal(player)
+end
+
 local function on_open_button(player)
   if player.gui.screen[GUI.frame] and player.gui.screen[GUI.frame].valid then
     player.gui.screen[GUI.frame].destroy()
@@ -462,10 +497,6 @@ local function on_gui_click(event)
   local tags = element.tags or {}
   local player = game.get_player(event.player_index)
   if not player then return end
-  if element.name == GUI.button then
-    on_open_button(player)
-    return
-  end
   local data = player_data(player.index)
   local action = tags.action
 
@@ -476,6 +507,8 @@ local function on_gui_click(event)
   elseif action == "add-line" then
     table.insert(data.lines, new_line(data))
     redraw_after_change(player)
+  elseif action == "settings" then
+    set_modal_for_settings(player)
   elseif action == "copy" or action == "trash" or action == "up" or action == "down" then
     local line, index = find_line(data, tags.line_id)
     if not line or not index then return end
@@ -520,9 +553,9 @@ local function on_gui_click(event)
   elseif action == "modal-save" then
     local modal = data.modal
     if not modal then return end
-    local line = find_line(data, modal.line_id)
-    if not line then close_modal(player); return end
     if modal.kind == "item" then
+      local line = find_line(data, modal.line_id)
+      if not line then close_modal(player); return end
       local modal_frame = player.gui.screen[GUI.modal]
       local content = modal_frame and modal_frame["cgi_item_dialog_content"]
       local item_row = content and content["cgi_modal_item_row"]
@@ -556,7 +589,30 @@ local function on_gui_click(event)
       end
       close_modal(player)
       redraw_after_change(player)
+    elseif modal.kind == "settings" then
+      local modal_frame = player.gui.screen[GUI.modal]
+      local content = modal_frame and modal_frame["cgi_dialog_content"]
+      local row = content and content["cgi_default_container_row"]
+      local chooser = row and row["cgi_default_container"]
+      local selected = chooser and chooser.elem_value
+      local selected_name = selected_prototype_name(selected)
+      local available = false
+      for _, option in ipairs(container_options()) do
+        if option.name == selected_name then available = true; break end
+      end
+      if not available then
+        player.print(translated("choose-container"))
+        return
+      end
+      data.default_container = selected_name
+      data.default_container_quality = quality_from_selection(selected)
+      close_modal(player)
+      if player.gui.screen[GUI.frame] and player.gui.screen[GUI.frame].valid then
+        player.opened = player.gui.screen[GUI.frame]
+      end
     else
+      local line = find_line(data, modal.line_id)
+      if not line then close_modal(player); return end
       local recipe = modal.selected_recipe
       local node = find_node({ children = line.roots }, modal.node_id)
       if not (recipe and node and recipe_matches(recipe, node.item) and make_recipe_children(data, node, recipe)) then
@@ -628,15 +684,21 @@ local function on_gui_elem_changed(event)
   local element = event.element
   if not (element and element.valid) then return end
   local tags = element.tags or {}
-  if tags.action == "container" then
-    local line = find_line(player_data(event.player_index), tags.line_id)
+  if tags.action == "container" or tags.action == "default-container" then
+    local data = player_data(event.player_index)
+    local line = tags.action == "container" and find_line(data, tags.line_id) or nil
     local selected = element.elem_value
     local selected_name = selected_prototype_name(selected)
     local available = false
     for _, option in ipairs(container_options()) do
       if option.name == selected_name then available = true; break end
     end
-    if line and available then
+    if tags.action == "default-container" and available then
+      if data.modal and data.modal.kind == "settings" then
+        data.modal.container = selected_name
+        data.modal.quality = quality_from_selection(selected)
+      end
+    elseif line and available then
       line.container = selected_name
       line.container_quality = quality_from_selection(selected)
       render_main(game.get_player(event.player_index))
@@ -659,34 +721,22 @@ local function on_gui_text_changed(event)
   end
 end
 
-local function add_top_button(player)
-  local top = player.gui.top
-  if top[GUI.button] and top[GUI.button].valid then return end
-  add(top, {
-    type = "button", name = GUI.button,
-    caption = translated("open"),
-    tooltip = translated("title")
-  })
-end
-
 local function on_player_created(event)
   local player = game.get_player(event.player_index)
   if player then
     player_data(player.index)
-    add_top_button(player)
   end
 end
 
 local function on_player_joined(event)
   local player = game.get_player(event.player_index)
-  if player then add_top_button(player) end
+  if player then player_data(player.index) end
 end
 
 local function on_init()
   storage.cgi_players = {}
   for _, player in pairs(game.players) do
     player_data(player.index)
-    add_top_button(player)
   end
 end
 
@@ -694,7 +744,6 @@ local function on_configuration_changed()
   storage.cgi_players = storage.cgi_players or {}
   for _, player in pairs(game.players) do
     player_data(player.index)
-    add_top_button(player)
   end
 end
 
@@ -726,6 +775,12 @@ local function on_toggle_input(event)
   if player then on_open_button(player) end
 end
 
+local function on_lua_shortcut(event)
+  if event.prototype_name ~= "container-item-planner-open" then return end
+  local player = game.get_player(event.player_index)
+  if player then on_open_button(player) end
+end
+
 return {
   on_init = on_init,
   on_configuration_changed = on_configuration_changed,
@@ -735,5 +790,6 @@ return {
   on_gui_elem_changed = on_gui_elem_changed,
   on_gui_text_changed = on_gui_text_changed,
   on_gui_closed = on_gui_closed,
-  on_toggle_input = on_toggle_input
+  on_toggle_input = on_toggle_input,
+  on_lua_shortcut = on_lua_shortcut
 }
