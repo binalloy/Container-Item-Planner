@@ -38,7 +38,7 @@ The generated blueprint contains one container at the origin. Blueprint item req
 Store mutable planner data in Factorio's persisted `storage` table, indexed by player index. Do not put GUI elements or Lua objects in persisted state.
 
 ```text
-storage.cgi_players[player_index] = {
+storage.cip_players[player_index] = {
   lines = { line, ... },
   next_line_id = integer,
   next_node_id = integer,

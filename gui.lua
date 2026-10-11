@@ -1,6 +1,6 @@
 local GUI = {
-  frame = "cgi_main_frame",
-  modal = "cgi_modal_frame"
+  frame = "cip_main_frame",
+  modal = "cip_modal_frame"
 }
 
 local Planner = require("planner")
@@ -76,152 +76,195 @@ local function add_container_selector(parent, name, action, line_id, container, 
     type = "choose-elem-button", name = name,
     elem_type = "entity-with-quality",
     elem_filters = { { filter = "name", name = names } },
+    tooltip = translated("container-selector-tooltip"),
     tags = { action = action, line_id = line_id }
   })
   chooser.elem_value = { name = container, quality = quality or "normal" }
   return chooser
 end
 
-local function render_total_column(parent, line)
+local function render_total_contents(total_frame, line)
   local totals = totals_for(line) or {}
   local names = sorted_item_names(totals)
-  local total_frame = add(parent, {
-    type = "flow", name = "cgi_total_" .. line.id, direction = "horizontal",
+  if #names == 0 then
+    local empty_flow = add(total_frame, { type = "flow", direction = "horizontal" })
+    empty_flow.style.padding = 12
+    empty_flow.style.vertical_align = "center"
+    add(empty_flow, { type = "label", caption = translated("empty-total") })
+    return
+  end
+  local total_table = add(total_frame, {
+    type = "table", name = "cip_total_" .. line.id, column_count = math.min(20, math.max(#names, 1)),
+    style = "filter_slot_table",
     tags = { action = "total-column", line_id = line.id }
   })
-  if #names == 0 then
-    add(total_frame, { type = "label", caption = "—" })
-  else
-    for _, key in ipairs(names) do
-      local name, quality = key:match("^(.-)%z(.*)$")
-      local amount = totals[key]
-      local enabled = not line.filtered[key]
-      add(total_frame, {
-        type = "sprite-button", sprite = "item/" .. name,
-        quality = quality,
-        number = amount, style = line.filtered[key] and "red_slot_button" or "slot_button", enabled = true,
-        tooltip = { "", prototypes.item[name].localised_name, " × ", amount,
-          "\n", enabled and translated("filter-item") or translated("include-item") },
-        tags = { action = "toggle-filter", line_id = line.id, item = name, quality = quality, filtered = not enabled }
-      })
-    end
+  total_table.style.horizontal_spacing = 1
+  total_table.style.vertical_spacing = 1
+  for _, key in ipairs(names) do
+    local name, quality = key:match("^(.-)%z(.*)$")
+    local amount = totals[key]
+    local enabled = not line.filtered[key]
+    add(total_table, {
+      type = "sprite-button", sprite = "item/" .. name,
+      quality = quality,
+      number = amount, style = line.filtered[key] and "red_slot_button" or "slot_button", enabled = true,
+      tooltip = { "", prototypes.item[name].localised_name, " × ", amount,
+        "\n", enabled and translated("filter-item") or translated("include-item") },
+      tags = { action = "toggle-filter", line_id = line.id, item = name, quality = quality, filtered = not enabled }
+    })
   end
+end
+
+local function render_total_column(parent, line)
+  local total_frame = add(parent, {
+    type = "frame", name = "cip_total_frame_" .. line.id,
+    direction = "horizontal", style = "inside_shallow_frame"
+  })
+  total_frame.style.top_padding = 2
+  total_frame.style.bottom_padding = 3
+  total_frame.style.left_padding = 3
+  total_frame.style.right_padding = 3
+  total_frame.style.minimal_height = 40 + total_frame.style.top_padding + total_frame.style.bottom_padding;
+  total_frame.style.vertical_align = "center"
+  render_total_contents(total_frame, line)
   return total_frame
+end
+
+local function count_descendants(node)
+  local count = 0
+  for _, child in ipairs(node.children or {}) do
+    count = count + 1 + count_descendants(child)
+  end
+  return count
 end
 
 local function render_node(parent, line, node, depth, ancestor_excluded)
   local excluded = ancestor_excluded or node.excluded or false
   local row = add(parent, { type = "flow", direction = "horizontal" })
-  local tooltip = node.children
-    and translated("expanded-help")
-    or translated("expand-help")
+  row.style.horizontal_spacing = 0
+  local tooltip = translated(depth == 0 and "root-node-tooltip" or "ingredient-node-tooltip")
   local button_style = excluded and "red_slot_button"
     or (node.recipe and "green_slot_button" or "slot_button")
   add(row, {
-    type = "sprite-button", name = "cgi_node_" .. node.id,
+    type = "sprite-button", name = "cip_node_" .. node.id,
     sprite = (node.fluid and "fluid/" or "item/") .. node.item, quality = node.quality or "normal", number = node.amount,
     style = button_style,
     tooltip = tooltip,
     tags = { action = "item-node", line_id = line.id, node_id = node.id, depth = depth, fluid = node.fluid or false, excluded = excluded }
   })
   if node.children and #node.children > 0 then
-    add(row, { type = "line", direction = "vertical" })
-    for _, child in ipairs(node.children) do
-      render_node(row, line, child, depth + 1, excluded)
+    local expansion = add(row, { type = "flow", direction = "horizontal" })
+    expansion.style.top_margin = 4
+    expansion.style.horizontal_spacing = 2
+    -- expansion.style.horizontally_squashable = true
+    for index, child in ipairs(node.children) do
+      local ingredient = add(expansion, { type = "flow", direction = "vertical" })
+      -- ingredient.style.horizontal_align = "center"
+      ingredient.style.vertical_spacing = 0
+      -- ingredient.style.maximal_width = 40
+      local horizontal = add(ingredient, { type = "line", direction = "horizontal" })
+      horizontal.style.width = 40 * (count_descendants(child) + 1)
+      horizontal.style.horizontally_stretchable = false
+      if index == #node.children then horizontal.style.width = 22 end
+      local vertical = add(ingredient, { type = "line", direction = "vertical" })
+      vertical.style.height = 6
+      vertical.style.left_margin = 18
+      vertical.style.top_margin = -2
+      vertical.style.vertically_stretchable = false
+      render_node(ingredient, line, child, depth + 1, excluded)
     end
   end
   return row
 end
 
-local function add_action_button(parent, caption, action, line_id, tooltip)
-  return add(parent, {
-    type = "button", caption = caption,
-    tooltip = tooltip or caption,
-    tags = { action = action, line_id = line_id }
-  })
-end
-
 local function render_line(parent, data, line)
   local card = add(parent, {
-    type = "frame", name = "cgi_line_" .. line.id,
-    direction = "vertical", style = "inside_shallow_frame"
+    type = "frame", name = "cip_line_" .. line.id,
+    direction = "vertical", style = "shallow_frame"
   })
-  local header = add(card, { type = "flow", direction = "horizontal" })
-  add(header, {
-    type = "textfield", name = "cgi_title_" .. line.id,
-    text = line.title or "", style = "stretchable_textfield",
-    tags = { action = "title", line_id = line.id }
+  card.style.top_padding = 6
+  card.style.bottom_padding = 6
+  card.style.left_padding = 6
+  card.style.right_padding = 6
+  card.style.left_margin = 3
+  card.style.right_margin = 3
+  card.style.top_margin = 3
+  local header = add(card, {
+    type = "flow", name = "cip_line_header_" .. line.id, direction = "horizontal"
   })
-  local spacer = add(header, { type = "empty-widget" })
-  spacer.style.horizontally_stretchable = true
-  add_action_button(header, translated("duplicate"), "copy", line.id, translated("duplicate"))
-  add_action_button(header, translated("delete"), "trash", line.id, translated("delete"))
-  add_action_button(header, "↑", "up", line.id, translated("move-up"))
-  add_action_button(header, "↓", "down", line.id, translated("move-down"))
+  render_total_column(header, line)
+  local controls = add(header, {
+    type = "flow", name = "cip_container_controls_" .. line.id,
+    direction = "horizontal", style = "cip_card_horizontal_flow"
+  })
 
-  local body = add(card, {
-    type = "flow", name = "cgi_body_" .. line.id, direction = "horizontal"
-  })
-  local items_panel = add(body, { type = "flow", direction = "vertical" })
-  items_panel.style.width = 440
-  add(items_panel, { type = "label", caption = translated("item-requested") })
-  local roots = add(items_panel, {
-    type = "scroll-pane", direction = "vertical",
-    horizontal_scroll_policy = "auto", vertical_scroll_policy = "auto"
-  })
-  roots.style.width = 440
-  roots.style.maximal_height = 190
-  for _, root in ipairs(line.roots) do
-    render_node(roots, line, root, 0)
-  end
-  add(roots, {
-    type = "button", caption = translated("add-item"), style = "button",
-    tags = { action = "add-item", line_id = line.id }
-  })
-  add(body, { type = "line", direction = "vertical" })
-
-  local multiplier_panel = add(body, { type = "flow", direction = "vertical" })
-  multiplier_panel.style.width = 110
-  add(multiplier_panel, { type = "label", caption = translated("multiplier") })
-  add(multiplier_panel, {
-    type = "textfield", name = "cgi_multiplier_" .. line.id,
+  local multiplier_label = add(controls, { type = "label", caption = translated("multiplier") })
+  multiplier_label.style.left_margin = 8
+  local multiplier = add(controls, {
+    type = "textfield", name = "cip_multiplier_" .. line.id,
     text = line.multiplier_text or "", numeric = true, allow_decimal = true,
-    allow_negative = false, tags = { action = "multiplier", line_id = line.id }
+    allow_negative = false, tooltip = translated("multiplier-tooltip"),
+    tags = { action = "multiplier", line_id = line.id }
   })
-  multiplier_panel["cgi_multiplier_" .. line.id].style.width = 90
-  add(body, { type = "line", direction = "vertical" })
+  multiplier.style.width = 90
 
-  local total_panel = add(body, {
-    type = "flow", name = "cgi_total_panel_" .. line.id, direction = "vertical"
-  })
-  total_panel.style.width = 180
-  add(total_panel, { type = "label", caption = translated("total") })
-  local totals = totals_for(line)
-  if totals then
-    render_total_column(total_panel, line)
-  else
-    add(total_panel, { type = "label", caption = translated("invalid-multiplier") })
-  end
-  add(body, { type = "line", direction = "vertical" })
-
-  local container_panel = add(body, {
-    type = "flow", name = "cgi_container_panel_" .. line.id, direction = "vertical"
-  })
-  container_panel.style.width = 200
-  add(container_panel, { type = "label", caption = translated("container") })
-  local container_controls = add(container_panel, {
-    type = "flow", name = "cgi_container_controls_" .. line.id, direction = "horizontal"
-  })
-  add_container_selector(container_controls, "cgi_container_" .. line.id, "container", line.id,
+  add_container_selector(controls, "cip_container_" .. line.id, "container", line.id,
     line.container, line.container_quality)
   local blueprint_status = blueprint_state(line)
-  add(container_controls, {
-    type = "sprite-button", name = "cgi_blueprint_" .. line.id,
+  add(controls, {
+    type = "sprite-button", name = "cip_blueprint_" .. line.id,
     sprite = "item/blueprint", style = "slot_button",
     enabled = blueprint_status == "ready",
     tooltip = translated(BLUEPRINT_STATUS_MESSAGES[blueprint_status]),
     tags = { action = "blueprint", line_id = line.id }
   })
+  local title = add(controls, {
+    type = "textfield", name = "cip_title_" .. line.id,
+    text = line.title or "", icon_selector = true,
+    tooltip = translated("plan-title-tooltip"),
+    tags = { action = "title", line_id = line.id }
+  })
+  title.style.width = 130
+  local copy = add(controls, {
+    type = "sprite-button", sprite = "utility/copy", style = "tool_button",
+    tooltip = translated("duplicate"), tags = { action = "copy", line_id = line.id }
+  })
+  -- copy.style.width, copy.style.height = 28, 28
+  local trash = add(controls, {
+    type = "sprite-button", sprite = "utility/trash", style = "red_button",
+    tooltip = translated("delete"), tags = { action = "trash", line_id = line.id }
+  })
+  trash.style.width, trash.style.height = 28, 28
+  trash.style.padding = 2
+  local move_sprite = data.move_line_id and data.move_line_id ~= line.id
+    and "container-item-planner-move-target" or "container-item-planner-move-up-down"
+  local move = add(controls, {
+    type = "sprite-button", sprite = move_sprite, style = "tool_button",
+    tooltip = translated(data.move_line_id == line.id and "move-cancel" or (data.move_line_id and "move-target" or "move-plan")),
+    tags = { action = "move-line", line_id = line.id }
+  })
+  move.style.width, move.style.height = 20, 28
+  move.style.padding = 0
+  move.toggled = data.move_line_id == line.id
+
+  local roots = add(card, {
+    type = "scroll-pane",
+    horizontal_scroll_policy = "dont-show-but-allow-scrolling",
+  })
+  roots.style.width = 900
+  roots.style.minimal_height = 60
+  -- roots.style.maximal_height = 190
+  roots.style.top_margin = 8
+  local root_flow = add(roots, { type = "flow", direction = "horizontal" })
+  root_flow.style.horizontal_spacing = 2
+  for _, root in ipairs(line.roots) do render_node(root_flow, line, root, 0) end
+  local add_item = add(root_flow, {
+    type = "sprite-button", sprite = "utility/add", style = "green_button",
+    tooltip = translated("add-item"), tags = { action = "add-item", line_id = line.id }
+  })
+  add_item.style.width, add_item.style.height = 32, 32
+  add_item.style.margin = 4
+  add_item.style.padding = 4
 end
 
 local function render_main(player)
@@ -232,14 +275,14 @@ local function render_main(player)
     type = "frame", name = GUI.frame, caption = "",
     direction = "vertical", auto_center = true
   })
-  frame.style.minimal_width = 1050
+  frame.style.minimal_width = 800
   local header = add(frame, {
     type = "flow", direction = "horizontal", style = "frame_header_flow"
   })
   header.drag_target = frame
   add(header, {
-    type = "sprite-button", name = "cgi_add_line_button", sprite = "utility/add",
-    style = "cgi_green_titlebar_button", tooltip = translated("add-line"),
+    type = "sprite-button", name = "cip_add_line_button", sprite = "utility/add",
+    style = "cip_green_titlebar_button", tooltip = translated("add-line"),
     tags = { action = "add-line" }
   })
   local left_spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
@@ -254,49 +297,49 @@ local function render_main(player)
   spacer.style.right_margin = 4
   spacer.ignored_by_interaction = true
   add(header, {
-    type = "button", caption = translated("settings"), style = "cgi_titlebar_text_button",
+    type = "button", caption = translated("settings"), style = "cip_titlebar_text_button",
     tooltip = translated("settings"), tags = { action = "settings" }
   })
   add(header, {
     type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
     tooltip = translated("close"), tags = { action = "close" }
   })
-  local content = add(frame, {
-    type = "frame", name = "cgi_main_content", direction = "vertical", style = "inside_shallow_frame_with_padding"
+  local scroll = add(frame, {
+    type = "scroll-pane", name = "cip_scroll", direction = "vertical"
   })
-  local scroll = add(content, {
-    type = "scroll-pane", name = "cgi_scroll", direction = "vertical"
-  })
+  scroll.vertical_scroll_policy = "always"
   scroll.style.maximal_height = 700
-  for _, line in ipairs(data.lines) do render_line(scroll, data, line) end
-  if #data.lines == 0 then
-    add(scroll, { type = "label", caption = translated("empty-lines") })
+  for index, line in ipairs(data.lines) do
+    render_line(scroll, data, line)
+    if index == #data.lines then
+      scroll["cip_line_" .. line.id].style.bottom_margin = 3
+    end
   end
+  if #data.lines == 0 then
+    local empty_flow = add(scroll, { type = "flow", direction = "vertical" })
+    empty_flow.style.horizontally_stretchable = true
+    local empty_label = add(empty_flow, { type = "label", caption = translated("empty-lines") })
+    empty_label.style.single_line = false
+    empty_label.style.margin = 12
+  end
+  frame.force_auto_center()
   player.opened = frame
 end
 
 local function update_line_calculations(player, line)
   local main = player.gui.screen[GUI.frame]
   if not (main and main.valid) then return end
-  local content = main["cgi_main_content"]
-  local scroll = content and content["cgi_scroll"]
-  local card = scroll and scroll["cgi_line_" .. line.id]
-  local body = card and card["cgi_body_" .. line.id]
-  local total_panel = body and body["cgi_total_panel_" .. line.id]
-  if not total_panel then return end
+  local scroll = main["cip_scroll"]
+  local card = scroll and scroll["cip_line_" .. line.id]
+  local header = card and card["cip_line_header_" .. line.id]
+  local total_frame = header and header["cip_total_frame_" .. line.id]
+  if not total_frame then return end
 
-  total_panel.clear()
-  add(total_panel, { type = "label", caption = translated("total") })
-  local totals = totals_for(line)
-  if totals then
-    render_total_column(total_panel, line)
-  else
-    add(total_panel, { type = "label", caption = translated("invalid-multiplier") })
-  end
+  total_frame.clear()
+  render_total_contents(total_frame, line)
 
-  local container_panel = body["cgi_container_panel_" .. line.id]
-  local controls = container_panel and container_panel["cgi_container_controls_" .. line.id]
-  local blueprint_button = controls and controls["cgi_blueprint_" .. line.id]
+  local controls = card["cip_container_controls_" .. line.id]
+  local blueprint_button = controls and controls["cip_blueprint_" .. line.id]
   if blueprint_button then
     local blueprint_status = blueprint_state(line)
     blueprint_button.enabled = blueprint_status == "ready"
@@ -313,6 +356,76 @@ local function close_modal(player)
   if main and main.valid then main.enabled = true end
 end
 
+local function render_item_dialog(content, modal)
+  local row = add(content, {
+    type = "flow", name = "cip_modal_item_row", direction = "horizontal",
+    style = "cip_card_horizontal_flow"
+  })
+  add(row, { type = "label", caption = translated("item") })
+  local chooser = add(row, {
+    type = "choose-elem-button", name = "cip_modal_item", elem_type = "item-with-quality",
+    tags = { action = "modal-item" }
+  })
+  chooser.elem_value = modal.item and { name = modal.item, quality = modal.quality or "normal" } or nil
+  add(row, { type = "label", caption = translated("amount") })
+  local amount = add(row, {
+    type = "textfield", name = "cip_modal_amount", text = tostring(modal.amount or 1),
+    numeric = true, allow_decimal = false, allow_negative = false
+  })
+  amount.style.width = 90
+end
+
+local function render_recipe_dialog(content, modal)
+  local flow = add(content, { type = "flow", direction = "vertical" })
+  flow.style.vertical_spacing = 6
+  add(flow, { type = "label", caption = translated("choose-recipe") })
+
+  local normal, recycling = {}, {}
+  for _, name in ipairs(modal.options) do
+    local recipe = prototypes.recipe[name]
+    local categories = recipe and safe_field(recipe, "categories") or nil
+    local is_recycling = false
+    if categories then
+      for _, category in ipairs(categories) do
+        if category == "recycling" then is_recycling = true; break end
+      end
+    elseif recipe and safe_field(recipe, "category") == "recycling" then
+      is_recycling = true
+    end
+    local group = is_recycling and recycling or normal
+    group[#group + 1] = name
+  end
+
+  local function add_recipe_group(title, recipes)
+    if #recipes == 0 then return end
+    title_label = add(flow, { type = "label", caption = translated(title) })
+    title_label.style.font = "heading-2"
+    title_label.style.top_margin = 6
+    local grid = add(flow, { type = "table", column_count = 6 })
+    for _, name in ipairs(recipes) do
+      local recipe = prototypes.recipe[name]
+      add(grid, {
+        type = "sprite-button", sprite = "recipe/" .. name, style = "slot_button",
+        tooltip = recipe and recipe.localised_name or name,
+        toggled = modal.selected_recipe == name,
+        tags = { action = "recipe-choice", recipe = name }
+      })
+    end
+  end
+  add_recipe_group("normal-recipes", normal)
+  add_recipe_group("recycling-recipes", recycling)
+end
+
+local function render_settings_dialog(content, modal)
+  local row = add(content, {
+    type = "flow", name = "cip_default_container_row", direction = "horizontal",
+    style = "cip_card_horizontal_flow"
+  })
+  add(row, { type = "label", caption = translated("default-container") })
+  add_container_selector(row, "cip_default_container", "default-container", nil,
+    modal.container, modal.quality)
+end
+
 local function render_modal(player)
   if player.gui.screen[GUI.modal] and player.gui.screen[GUI.modal].valid then
     player.gui.screen[GUI.modal].destroy()
@@ -324,10 +437,8 @@ local function render_modal(player)
   if main and main.valid then main.enabled = false end
   local frame = add(player.gui.screen, {
     type = "frame", name = GUI.modal, caption = "",
-    direction = "vertical", auto_center = true
+    direction = "vertical"
   })
-  local recipe_content = frame
-  local item_content = frame
   local title_key = modal.kind == "recipe" and "recipe-dialog-title"
     or (modal.kind == "settings" and "settings" or "add-item")
   local header = add(frame, {
@@ -345,78 +456,23 @@ local function render_modal(player)
     type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
     tooltip = translated("close"), tags = { action = "modal-cancel" }
   })
-  if modal.kind == "recipe" or modal.kind == "settings" then
-    local content = add(frame, {
-      type = "frame", name = "cgi_dialog_content", direction = "vertical",
+  local content
+  if modal.kind == "item" then
+    content = add(frame, {
+      type = "frame", name = "cip_item_dialog_content", direction = "vertical",
+      style = "inside_shallow_frame_with_padding"
+    })
+    render_item_dialog(content, modal)
+  else
+    content = add(frame, {
+      type = "frame", name = "cip_dialog_content", direction = "vertical",
       style = "inside_shallow_frame_with_padding"
     })
     if modal.kind == "recipe" then
-      add(content, { type = "label", caption = translated("choose-recipe") })
+      render_recipe_dialog(content, modal)
+    else
+      render_settings_dialog(content, modal)
     end
-    recipe_content = content
-  else
-    item_content = add(frame, {
-      type = "frame", name = "cgi_item_dialog_content", direction = "vertical",
-      style = "inside_shallow_frame_with_padding"
-    })
-  end
-  if modal.kind == "item" then
-    local row = add(item_content, {
-      type = "flow", name = "cgi_modal_item_row", direction = "horizontal"
-    })
-    add(row, { type = "label", caption = translated("item") })
-    local chooser = add(row, {
-      type = "choose-elem-button", name = "cgi_modal_item", elem_type = "item-with-quality",
-      tags = { action = "modal-item" }
-    })
-    chooser.elem_value = modal.item and { name = modal.item, quality = modal.quality or "normal" } or nil
-    add(row, { type = "label", caption = translated("amount") })
-    add(row, {
-      type = "textfield", name = "cgi_modal_amount", text = tostring(modal.amount or 1),
-      numeric = true, allow_decimal = false, allow_negative = false
-    })
-  elseif modal.kind == "recipe" then
-    local normal, recycling = {}, {}
-    for _, name in ipairs(modal.options) do
-      local recipe = prototypes.recipe[name]
-      local categories = recipe and safe_field(recipe, "categories") or nil
-      local is_recycling = false
-      if categories then
-        for _, category in ipairs(categories) do
-          if category == "recycling" then is_recycling = true; break end
-        end
-      elseif recipe and safe_field(recipe, "category") == "recycling" then
-        is_recycling = true
-      end
-      if is_recycling then
-        recycling[#recycling + 1] = name
-      else
-        normal[#normal + 1] = name
-      end
-    end
-    local function add_recipe_group(title, recipes)
-      if #recipes == 0 then return end
-      add(recipe_content, { type = "label", caption = translated(title) })
-      local grid = add(recipe_content, { type = "table", column_count = 6 })
-      for _, name in ipairs(recipes) do
-        local recipe = prototypes.recipe[name]
-        add(grid, {
-          type = "sprite-button", sprite = "recipe/" .. name, style = "slot_button",
-          tooltip = recipe and recipe.localised_name or name,
-          toggled = modal.selected_recipe == name,
-          tags = { action = "recipe-choice", recipe = name }
-        })
-      end
-    end
-    add_recipe_group("normal-recipes", normal)
-    add_recipe_group("recycling-recipes", recycling)
-  else
-    local row = add(recipe_content, {
-      type = "flow", name = "cgi_default_container_row", direction = "horizontal"
-    })
-    add(row, { type = "label", caption = translated("default-container") })
-    add_container_selector(row, "cgi_default_container", "default-container", nil,
-      modal.container, modal.quality)
   end
   if modal.kind == "item" or modal.kind == "settings" then
     local buttons = add(frame, {
@@ -436,23 +492,63 @@ local function render_modal(player)
       tags = { action = "modal-save" }
     })
   end
+  local anchor = modal.anchor
+  local resolution = player.display_resolution
+  local size = frame.size
+  if anchor and resolution and size then
+    local x = anchor.x + anchor.width + 8
+    local y = anchor.y
+    if x + size.width > resolution.width then
+      x = anchor.x - size.width - 8
+    end
+    x = math.max(0, math.min(x, resolution.width - size.width))
+    y = math.max(0, math.min(y, resolution.height - size.height))
+    frame.location = { x = x, y = y }
+  else
+    frame.force_auto_center()
+  end
   player.opened = frame
 end
 
-local function set_modal_for_item(player, line_id, node)
+local function gui_anchor(element, player)
+  local location, size = element.location, element.size
+  if not location or not size then
+    local main = player.gui.screen[GUI.frame]
+    if main and main.valid then
+      location, size = main.location, main.size
+    end
+  end
+  if not location or not size then return nil end
+  return { x = location.x, y = location.y, width = size.width, height = size.height }
+end
+
+local function focus_modal_amount(player, select_text)
+  local modal = player.gui.screen[GUI.modal]
+  local content = modal and modal["cip_item_dialog_content"]
+  local row = content and content["cip_modal_item_row"]
+  local amount = row and row["cip_modal_amount"]
+  if amount then
+    amount.focus()
+    if select_text then amount.select_all() end
+  end
+end
+
+local function set_modal_for_item(player, line_id, node, anchor)
   local data = player_data(player.index)
   data.modal = {
     kind = "item", line_id = line_id, node_id = node and node.id,
-    item = node and node.item, quality = node and (node.quality or "normal") or "normal", amount = node and node.amount or 1
+    item = node and node.item, quality = node and (node.quality or "normal") or "normal", amount = node and node.amount or 1,
+    anchor = gui_anchor(anchor, player)
   }
   render_modal(player)
+  if node then focus_modal_amount(player, true) end
 end
 
 local function redraw_after_change(player)
   render_main(player)
 end
 
-local function set_modal_for_recipe(player, line_id, node)
+local function set_modal_for_recipe(player, line_id, node, anchor)
   local data = player_data(player.index)
   local line = find_line(data, line_id)
   if not line then return end
@@ -466,17 +562,18 @@ local function set_modal_for_recipe(player, line_id, node)
   end
   data.modal = {
     kind = "recipe", line_id = line_id, node_id = node.id, item = node.item,
-    recipe = node.recipe, selected_recipe = nil, options = options
+    recipe = node.recipe, selected_recipe = nil, options = options, anchor = gui_anchor(anchor, player)
   }
   render_modal(player)
 end
 
-local function set_modal_for_settings(player)
+local function set_modal_for_settings(player, anchor)
   local data = player_data(player.index)
   data.modal = {
     kind = "settings",
     container = data.default_container or "iron-chest",
-    quality = data.default_container_quality or "normal"
+    quality = data.default_container_quality or "normal",
+    anchor = gui_anchor(anchor, player)
   }
   render_modal(player)
 end
@@ -500,6 +597,10 @@ local function on_gui_click(event)
   local data = player_data(player.index)
   local action = tags.action
 
+  if data.move_line_id and action ~= "move-line" then
+    data.move_line_id = nil
+  end
+
   if action == "close" then
     if player.gui.screen[GUI.frame] then player.gui.screen[GUI.frame].destroy() end
     close_modal(player)
@@ -508,8 +609,24 @@ local function on_gui_click(event)
     table.insert(data.lines, new_line(data))
     redraw_after_change(player)
   elseif action == "settings" then
-    set_modal_for_settings(player)
-  elseif action == "copy" or action == "trash" or action == "up" or action == "down" then
+    set_modal_for_settings(player, element)
+  elseif action == "move-line" then
+    local line, index = find_line(data, tags.line_id)
+    if not line or not index then return end
+    if not data.move_line_id then
+      data.move_line_id = line.id
+    elseif data.move_line_id == line.id then
+      data.move_line_id = nil
+    else
+      local moving, moving_index = find_line(data, data.move_line_id)
+      data.move_line_id = nil
+      if moving and moving_index then
+        table.remove(data.lines, moving_index)
+        table.insert(data.lines, math.min(index, #data.lines + 1), moving)
+      end
+    end
+    redraw_after_change(player)
+  elseif action == "copy" or action == "trash" then
     local line, index = find_line(data, tags.line_id)
     if not line or not index then return end
     if action == "trash" then
@@ -524,14 +641,10 @@ local function on_gui_click(event)
       for name, filtered in pairs(line.filtered or {}) do copy.filtered[name] = filtered end
       for _, root in ipairs(line.roots) do table.insert(copy.roots, clone_node(data, root)) end
       table.insert(data.lines, index + 1, copy)
-    elseif action == "up" and index > 1 then
-      data.lines[index], data.lines[index - 1] = data.lines[index - 1], data.lines[index]
-    elseif action == "down" and index < #data.lines then
-      data.lines[index], data.lines[index + 1] = data.lines[index + 1], data.lines[index]
     end
     redraw_after_change(player)
   elseif action == "add-item" then
-    set_modal_for_item(player, tags.line_id, nil)
+    set_modal_for_item(player, tags.line_id, nil, element)
   elseif action == "recipe-choice" then
     local modal = data.modal
     if modal and modal.kind == "recipe" and event.button == defines.mouse_button_type.left then
@@ -557,10 +670,10 @@ local function on_gui_click(event)
       local line = find_line(data, modal.line_id)
       if not line then close_modal(player); return end
       local modal_frame = player.gui.screen[GUI.modal]
-      local content = modal_frame and modal_frame["cgi_item_dialog_content"]
-      local item_row = content and content["cgi_modal_item_row"]
-      local item_button = item_row and item_row["cgi_modal_item"]
-      local amount_field = item_row and item_row["cgi_modal_amount"]
+      local content = modal_frame and modal_frame["cip_item_dialog_content"]
+      local item_row = content and content["cip_modal_item_row"]
+      local item_button = item_row and item_row["cip_modal_item"]
+      local amount_field = item_row and item_row["cip_modal_amount"]
       local selected = item_button and item_button.elem_value
       local item = selected_prototype_name(selected)
       local amount = amount_field and tonumber(amount_field.text)
@@ -591,9 +704,9 @@ local function on_gui_click(event)
       redraw_after_change(player)
     elseif modal.kind == "settings" then
       local modal_frame = player.gui.screen[GUI.modal]
-      local content = modal_frame and modal_frame["cgi_dialog_content"]
-      local row = content and content["cgi_default_container_row"]
-      local chooser = row and row["cgi_default_container"]
+      local content = modal_frame and modal_frame["cip_dialog_content"]
+      local row = content and content["cip_default_container_row"]
+      local chooser = row and row["cip_default_container"]
       local selected = chooser and chooser.elem_value
       local selected_name = selected_prototype_name(selected)
       local available = false
@@ -637,7 +750,7 @@ local function on_gui_click(event)
       if (tags.depth or 0) >= MAX_RECIPE_DEPTH then
         player.print(translated("depth-limit"))
       else
-        set_modal_for_recipe(player, tags.line_id, node)
+        set_modal_for_recipe(player, tags.line_id, node, element)
       end
     elseif event.button == defines.mouse_button_type.right then
       if (tags.depth or 0) > 0 then
@@ -657,7 +770,7 @@ local function on_gui_click(event)
     elseif (tags.depth or 0) > 0 then
       return
     else
-      set_modal_for_item(player, tags.line_id, node)
+      set_modal_for_item(player, tags.line_id, node, element)
     end
   elseif action == "toggle-filter" then
     local line = find_line(data, tags.line_id)
@@ -684,7 +797,12 @@ local function on_gui_elem_changed(event)
   local element = event.element
   if not (element and element.valid) then return end
   local tags = element.tags or {}
-  if tags.action == "container" or tags.action == "default-container" then
+  if tags.action == "modal-item" then
+    if element.elem_value then
+      local player = game.get_player(event.player_index)
+      if player then focus_modal_amount(player, true) end
+    end
+  elseif tags.action == "container" or tags.action == "default-container" then
     local data = player_data(event.player_index)
     local line = tags.action == "container" and find_line(data, tags.line_id) or nil
     local selected = element.elem_value
@@ -734,14 +852,14 @@ local function on_player_joined(event)
 end
 
 local function on_init()
-  storage.cgi_players = {}
+  storage.cip_players = {}
   for _, player in pairs(game.players) do
     player_data(player.index)
   end
 end
 
 local function on_configuration_changed()
-  storage.cgi_players = storage.cgi_players or {}
+  storage.cip_players = storage.cip_players or {}
   for _, player in pairs(game.players) do
     player_data(player.index)
   end
@@ -749,23 +867,26 @@ end
 
 local function on_gui_closed(event)
   local player = game.get_player(event.player_index)
-  if player and event.element and event.element.valid then
-    local modal = player.gui.screen[GUI.modal]
-    if event.element.name == GUI.modal then
-      if not (modal and modal.valid and player.opened == modal) then
-        close_modal(player)
-        local main = player.gui.screen[GUI.frame]
-        if main and main.valid then player.opened = main else player.opened = nil end
-      end
-    elseif event.element.name == GUI.frame then
-      -- The main frame is closed when player.opened switches to the modal.
-      -- Modal state is the reliable signal that this is an intentional handoff.
-      if not player_data(player.index).modal then
-        close_modal(player)
-        local main = player.gui.screen[GUI.frame]
-        if main and main.valid then main.destroy() end
-        player.opened = nil
-      end
+  if not player then return end
+
+  local data = player_data(player.index)
+  data.move_line_id = nil
+  local main = player.gui.screen[GUI.frame]
+  local modal = player.gui.screen[GUI.modal]
+  local closed_main = main and event.element == main
+  local closed_modal = modal and event.element == modal
+
+  -- Assigning the modal as player.opened closes the main window as the active
+  -- GUI, but the main frame must remain available underneath the modal.
+  local handoff = closed_main and data.modal and modal and modal.valid
+  if not handoff then
+    if closed_modal then
+      close_modal(player)
+      player.opened = main
+    elseif closed_main then
+      if modal and modal.valid then modal.destroy() end
+      if main and main.valid then main.destroy() end
+      data.modal = nil
     end
   end
 end

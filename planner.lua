@@ -6,11 +6,11 @@ local function has_chest_inventory(prototype)
 end
 
 local function player_data(player_index)
-  storage.cgi_players = storage.cgi_players or {}
-  local data = storage.cgi_players[player_index]
+  storage.cip_players = storage.cip_players or {}
+  local data = storage.cip_players[player_index]
   if not data then
     data = { lines = {}, next_line_id = 1, next_node_id = 1 }
-    storage.cgi_players[player_index] = data
+    storage.cip_players[player_index] = data
   end
   data.default_container = data.default_container or "iron-chest"
   data.default_container_quality = data.default_container_quality or "normal"
@@ -58,7 +58,10 @@ local function walk_node(node, callback)
 end
 
 local function clone_node(data, node)
-  local copy = { id = add_node_id(data), item = node.item, quality = node.quality or "normal", amount = node.amount }
+  local copy = {
+    id = add_node_id(data), item = node.item, quality = node.quality or "normal",
+    amount = node.amount, fluid = node.fluid
+  }
   if node.recipe then
     copy.recipe = node.recipe
     copy.children = {}
