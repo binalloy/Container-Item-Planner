@@ -1,0 +1,7 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2026-10-12
+
+  Features:
+    - Initial release of Container Item Planner.
+    - Plan container contents and create blueprints with item insertion requests.

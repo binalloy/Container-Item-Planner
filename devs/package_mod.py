@@ -13,7 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DESTINATION = Path.home() / "Programs" / "factorio" / "mods"
-REQUIRED_FILES = ("info.json", "data.lua", "control.lua", "gui.lua", "planner.lua")
+RUNTIME_FILES = ("info.json", "data.lua", "control.lua", "gui.lua", "planner.lua")
+REQUIRED_FILES = RUNTIME_FILES + ("graphics/move-target.png", "graphics/move-up-down.png")
+OPTIONAL_FILES = ("LICENSE", "changelog.txt", "thumbnail.png")
 
 
 def package(destination: Path) -> Path:
@@ -26,11 +28,13 @@ def package(destination: Path) -> Path:
     if not name or not version:
         raise ValueError("info.json must define non-empty 'name' and 'version' fields")
 
-    files = [ROOT / filename for filename in REQUIRED_FILES]
+    files = [ROOT / filename for filename in RUNTIME_FILES]
+    files.extend(ROOT / filename for filename in OPTIONAL_FILES if (ROOT / filename).is_file())
+    files.extend(sorted(path for path in (ROOT / "graphics").rglob("*") if path.is_file()))
     files.extend(sorted((ROOT / "locale").rglob("*")))
     files = [path for path in files if path.is_file()]
     if not all((ROOT / filename).is_file() for filename in REQUIRED_FILES):
-        raise FileNotFoundError("Expected info.json, data.lua, and control.lua in the mod root")
+        raise FileNotFoundError("One or more required mod files are missing")
 
     destination.mkdir(parents=True, exist_ok=True)
     archive = destination / f"{name}_{version}.zip"

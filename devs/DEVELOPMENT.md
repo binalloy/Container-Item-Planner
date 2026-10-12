@@ -13,11 +13,13 @@ There are no external mod dependencies. Container choices are discovered from bl
 - `control.lua` registers lifecycle and GUI events and delegates them to `gui.lua`.
 - `gui.lua` builds the planner interface and handles GUI events. `planner.lua` owns persisted planner state, recipe expansion, totals, capacity calculations, and blueprint creation.
 - `locale/en/locale.cfg` contains player-facing text.
-- `package_mod.py` builds `name_version.zip` and deploys it to the Factorio mods folder (or a caller-provided output folder).
+- `package_mod.py` builds `name_version.zip` and deploys it to the Factorio mods folder (or a caller-provided output folder). It includes runtime files, graphics, locale files, and available release metadata such as the license, changelog, and thumbnail.
 
 ## Packaging for in-game testing
 
 Run `python3 devs/package_mod.py` from the mod root to build and install the ZIP at `~/Programs/factorio/mods/container-item-planner_0.1.0.zip`. Pass `--output /path/to/mods` to use a different Factorio mods directory. The script reads the mod name and version from the root `info.json`, includes runtime files and locale files under a versioned top-level folder inside the ZIP, and atomically replaces the ZIP if it already exists. Factorio requires a mod folder inside the archive; the zip filename alone is not enough.
+
+To create the Mod Portal thumbnail from the vanilla Factorio icons, run `python3 devs/make_thumbnail.py`. By default, it reads from `~/Programs/factorio/data/base/graphics/icons` and writes `thumbnail.png` at the mod root. Use `--factorio-dir /path/to/factorio` for another installation or `--output /path/to/thumbnail.png` to choose a different output path. It crops the top-left 64×64 icon cells, scales the blueprint to 144×144 and the iron chest to 96×96, then centers the chest over the blueprint.
 
 Keep interface text in locale files. Keep calculations independent from GUI event handling where practical so capacity and recipe behavior can be reviewed without tracing rendering code.
 
