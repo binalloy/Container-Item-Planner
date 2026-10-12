@@ -90,6 +90,98 @@ local function add_node_id(data)
   return id
 end
 
+local function safe_field(value, key)
+  if not value then return nil end
+  local ok, result = pcall(function() return value[key] end)
+  if ok then return result end
+end
+
+local function is_blueprint_sandbox_item(prototype)
+  local group = safe_field(safe_field(prototype, "group"), "name")
+  local subgroup = safe_field(safe_field(prototype, "subgroup"), "name")
+  local function matches(name)
+    if type(name) ~= "string" then return false end
+    local normalized = name:lower():gsub("[^%w]", "")
+    return normalized:find("sandbox", 1, true) ~= nil
+      or normalized == "bpsb" or normalized:find("bpsb", 1, true) == 1
+  end
+  return matches(group) or matches(subgroup)
+end
+
+local function is_selectable_item(prototype)
+  return prototype ~= nil
+    and not is_unsorted_item(prototype)
+    and not is_blueprint_sandbox_item(prototype)
+    and not safe_field(prototype, "hidden")
+    and not safe_field(prototype, "parameter")
+end
+
+local function add_blueprint_contents_to_line(player, line, data)
+  local cursor = player.cursor_stack
+  local is_blueprint = safe_field(cursor, "is_blueprint")
+  if not cursor or not safe_field(cursor, "valid_for_read") or not is_blueprint then return nil end
+
+  local ok, entities = pcall(function() return cursor.get_blueprint_entities() end)
+  if not ok or type(entities) ~= "table" then
+    log("[Container Item Planner] Could not read entities from held blueprint: " .. tostring(entities))
+    return 0
+  end
+
+  local totals = {}
+  local function add_total(item_name, quality, amount)
+    local item_prototype = prototypes.item[item_name]
+    if not is_selectable_item(item_prototype) or type(amount) ~= "number" or amount <= 0 then return end
+    quality = quality or "normal"
+    local key = item_name .. "\0" .. quality
+    totals[key] = (totals[key] or 0) + amount
+  end
+
+  for _, entity in ipairs(entities) do
+    local imported_requests = false
+    for _, request in ipairs(entity.items or {}) do
+      local id = request.id or {}
+      local positions = request.items or {}
+      local amount = tonumber(positions.grid_count) or 0
+      for _, position in ipairs(positions.in_inventory or {}) do
+        amount = amount + (tonumber(position.count) or 1)
+      end
+      if amount > 0 then
+        add_total(id.name, id.quality, amount)
+        imported_requests = true
+      end
+    end
+
+    -- Import place items for entities without their own explicit item requests.
+    if not imported_requests then
+      local entity_prototype = prototypes.entity[entity.name]
+      local place_items = entity_prototype and safe_field(entity_prototype, "items_to_place_this")
+      local place_item = place_items and place_items[1]
+      if place_item then
+        add_total(place_item.name, entity.quality, place_item.count or 1)
+      end
+    end
+  end
+
+  local keys = {}
+  for key in pairs(totals) do keys[#keys + 1] = key end
+  table.sort(keys)
+  local count = 0
+  for _, key in ipairs(keys) do
+    local amount = totals[key]
+    local item_name, quality = key:match("^(.-)%z(.*)$")
+    line.roots[#line.roots + 1] = {
+      id = add_node_id(data), item = item_name, quality = quality, amount = amount
+    }
+    count = count + amount
+  end
+  if count == 0 then
+    log("[Container Item Planner] Held blueprint contains no selectable item requests or placeable entities.")
+  else
+    log("[Container Item Planner] Imported " .. tostring(count) .. " items from held blueprint.")
+  end
+  return count
+end
+
 local function find_line(data, id)
   for index, line in ipairs(data.lines) do
     if line.id == id then return line, index end
@@ -390,6 +482,7 @@ Planner.find_general_inventory = find_general_inventory
 Planner.player_data = player_data
 Planner.new_line = new_line
 Planner.add_node_id = add_node_id
+Planner.add_blueprint_contents_to_line = add_blueprint_contents_to_line
 Planner.find_line = find_line
 Planner.find_node = find_node
 Planner.walk_node = walk_node

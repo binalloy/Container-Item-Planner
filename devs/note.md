@@ -28,6 +28,6 @@
 [x] 8. After item selection, focus on amount input.
 [x] 9. Open dialog in the center or near cursor, not top left corner. Keep dialog position when content update.
 10. New feature: When clicking add line button with a blue print in the cursor, set request items in the new line the same as the items in the blueprint.
-11. New feature: create ghost item with specify amount in cursor.
+[x] 11. New feature: create ghost item with specify amount in cursor.
 [x] 12. What if too much requested items and total items?
 [x] 13. Empty total item hint.

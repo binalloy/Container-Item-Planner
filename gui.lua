@@ -7,6 +7,7 @@ local Planner = require("planner")
 local player_data = Planner.player_data
 local new_line = Planner.new_line
 local add_node_id = Planner.add_node_id
+local add_blueprint_contents_to_line = Planner.add_blueprint_contents_to_line
 local find_line = Planner.find_line
 local find_node = Planner.find_node
 local clone_node = Planner.clone_node
@@ -316,7 +317,7 @@ local function render_main(player)
   header.drag_target = frame
   add(header, {
     type = "sprite-button", name = "cip_add_line_button", sprite = "utility/add",
-    style = "cip_green_titlebar_button", tooltip = translated("add-line"),
+    style = "cip_green_titlebar_button", tooltip = translated("add-line-tooltip"),
     tags = { action = "add-line" }
   })
   local left_spacer = add(header, { type = "empty-widget", style = "draggable_space_header" })
@@ -642,7 +643,9 @@ local function on_gui_click(event)
     close_modal(player)
     player.opened = nil
   elseif action == "add-line" then
-    table.insert(data.lines, new_line(data))
+    local line = new_line(data)
+    add_blueprint_contents_to_line(player, line, data)
+    table.insert(data.lines, line)
     redraw_after_change(player)
   elseif action == "settings" then
     set_modal_for_settings(player, element)
@@ -680,7 +683,14 @@ local function on_gui_click(event)
     end
     redraw_after_change(player)
   elseif action == "add-item" then
-    set_modal_for_item(player, tags.line_id, nil, element)
+    local line = find_line(data, tags.line_id)
+    if not line then return end
+    local imported = add_blueprint_contents_to_line(player, line, data)
+    if imported == nil then
+      set_modal_for_item(player, tags.line_id, nil, element)
+    elseif imported > 0 then
+      redraw_after_change(player)
+    end
   elseif action == "recipe-choice" then
     local modal = data.modal
     if modal and modal.kind == "recipe" and event.button == defines.mouse_button_type.left then
