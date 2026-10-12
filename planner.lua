@@ -1,8 +1,61 @@
 local Planner = {}
 
-local function has_chest_inventory(prototype)
-  local ok, size = pcall(function() return prototype.get_inventory_size(defines.inventory.chest) end)
-  if ok and size and size > 0 then return size end
+local function find_general_inventory(prototype)
+  local blueprint_check_ok, not_blueprintable = pcall(function()
+    return prototype.has_flag("not-blueprintable")
+  end)
+  if not blueprint_check_ok or not_blueprintable then return end
+
+  local type_ok, entity_type = pcall(function() return prototype.type end)
+  if not type_ok then return end
+
+  -- Inventory IDs are shared across Lua object types. Only query the storage
+  -- inventory that belongs to a supported placeable storage entity type.
+  local inventory_index
+  if entity_type == "container" or entity_type == "logistic-container" then
+    inventory_index = defines.inventory.chest
+  elseif entity_type == "car" then
+    inventory_index = defines.inventory.car_trunk
+  elseif entity_type == "cargo-wagon" then
+    inventory_index = defines.inventory.cargo_wagon
+  elseif entity_type == "spider-vehicle" then
+    inventory_index = defines.inventory.spider_trunk
+  else
+    return
+  end
+
+  local ok, size = pcall(function() return prototype.get_inventory_size(inventory_index) end)
+  if not ok or not size or size <= 0 then return end
+
+  if entity_type == "container" then
+    -- Filtered and custom-stack chest inventories do not have interchangeable slots.
+    local inventory_type_ok, inventory_type = pcall(function() return prototype.inventory_type end)
+    if not inventory_type_ok or (inventory_type ~= "normal" and inventory_type ~= "with_bar"
+        and inventory_type ~= "with_weight_limit") then
+      return
+    end
+  end
+
+  return { index = inventory_index, slots = size }
+end
+
+local function is_unsorted_item(prototype)
+  if not prototype then return true end
+  local ok, unsorted = pcall(function()
+    local group, subgroup = prototype.group, prototype.subgroup
+    return not group or not subgroup or group.name == "other" or subgroup.name == "other"
+  end)
+  return not ok or unsorted
+end
+
+local function has_sorted_place_item(prototype)
+  local ok, place_items = pcall(function() return prototype.items_to_place_this end)
+  if not ok or not place_items then return false end
+  for _, place_item in ipairs(place_items) do
+    local item = prototypes.item[place_item.name]
+    if item and not is_unsorted_item(item) then return true end
+  end
+  return false
 end
 
 local function player_data(player_index)
@@ -75,9 +128,14 @@ end
 local function container_options()
   local result = {}
   for name, prototype in pairs(prototypes.entity) do
-    local inventory_size = has_chest_inventory(prototype)
-    if inventory_size then
-      table.insert(result, { name = name, label = prototype.localised_name, slots = inventory_size })
+    local inventory = find_general_inventory(prototype)
+    if inventory and has_sorted_place_item(prototype) then
+      table.insert(result, {
+        name = name,
+        label = prototype.localised_name,
+        inventory = inventory.index,
+        slots = inventory.slots
+      })
     end
   end
   table.sort(result, function(a,b) return a.name < b.name end)
@@ -162,15 +220,23 @@ local function sorted_item_names(totals)
 end
 
 local function recipe_output_amount(recipe, item_name)
+  if not recipe then return end
+  local total = 0
   for _, product in ipairs(recipe.products or {}) do
     if product.name == item_name then
       local amount = product.amount
-      if not amount then
-        amount = ((product.amount_min or product.amount_max or 1) + (product.amount_max or product.amount_min or 1)) / 2
+      if type(amount) ~= "number" or amount <= 0 then
+        local minimum = product.amount_min or product.amount_max
+        local maximum = product.amount_max or product.amount_min
+        amount = minimum and ((minimum + maximum) / 2) or 0
       end
-      return amount * (product.probability or 1)
+      -- Factorio 2.1 uses independent_probability; probability is retained for older data.
+      -- extra_count_fraction is a chance to receive one additional item.
+      local probability = product.independent_probability or product.probability or 1
+      total = total + (amount + (product.extra_count_fraction or 0)) * probability
     end
   end
+  if total > 0 then return total end
 end
 
 local function recipe_matches(recipe_name, item_name)
@@ -198,7 +264,10 @@ local function make_recipe_children(data, node, recipe_name)
   local old_children = node.children or {}
   local children = {}
   for _, ingredient in ipairs(recipe.ingredients or {}) do
-    if ((ingredient.type == nil or ingredient.type == "item") and prototypes.item[ingredient.name]) or (ingredient.type == "fluid" and prototypes.fluid[ingredient.name]) then
+    local include_item = (ingredient.type == nil or ingredient.type == "item")
+      and prototypes.item[ingredient.name]
+    local include_fluid = ingredient.type == "fluid" and prototypes.fluid[ingredient.name]
+    if include_item or include_fluid then
       local amount = ingredient_amount(ingredient) * crafts
       if amount > 0 then
         local fluid = ingredient.type == "fluid"
@@ -268,10 +337,12 @@ local function create_blueprint(player, line)
 
   local options = container_options()
   local chest = line.container
-  local slot_count = 0
+  local chosen
   for _, option in ipairs(options) do
-    if option.name == chest then slot_count = option.slots end
+    if option.name == chest then chosen = option; break end
   end
+  if not chosen then destination.clear(); return "no_container" end
+  local slot_count = chosen.slots
   local slot_index = 0
   local insert_plans = {}
   for _, key in ipairs(sorted_item_names(items)) do
@@ -282,7 +353,7 @@ local function create_blueprint(player, line)
     while amount > 0 do
       local count = math.min(stack_size, amount)
       table.insert(positions, {
-        inventory = defines.inventory.chest,
+        inventory = chosen.inventory,
         stack = slot_index,
         count = count
       })
@@ -298,7 +369,7 @@ local function create_blueprint(player, line)
     destination.clear()
     return "over_capacity"
   end
-  destination.set_blueprint_entities({
+  local blueprint_ok = pcall(function() destination.set_blueprint_entities({
     {
       entity_number = 1,
       name = chest,
@@ -306,12 +377,16 @@ local function create_blueprint(player, line)
       position = { 0, 0 },
       items = insert_plans
     }
-  })
+  }) end)
+  if not blueprint_ok then
+    destination.clear()
+    return "invalid_container"
+  end
   destination.label = line.title or "Container plan"
   return "created"
 end
 
-Planner.has_chest_inventory = has_chest_inventory
+Planner.find_general_inventory = find_general_inventory
 Planner.player_data = player_data
 Planner.new_line = new_line
 Planner.add_node_id = add_node_id

@@ -23,8 +23,8 @@
 [x] 3. Remove horizontal divider above buttons in item selection dialog.
 [x] 4. Align center the text and button
 [x] 5. Improve plan line ui
-6. Some receipt can not be selected without error message.
-7. Filter only containers with inventory in right category, and insert gosht item to the inventory slot.
+[x] 6. Some receipt can not be selected without error message.
+[x] 7. Filter only containers with inventory in right category, and insert gosht item to the inventory slot.
 [x] 8. After item selection, focus on amount input.
 [x] 9. Open dialog in the center or near cursor, not top left corner. Keep dialog position when content update.
 10. New feature: When clicking add line button with a blue print in the cursor, set request items in the new line the same as the items in the blueprint.

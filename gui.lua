@@ -17,6 +17,7 @@ local filtered_totals = Planner.filtered_totals
 local blueprint_state = Planner.blueprint_state
 local sorted_item_names = Planner.sorted_item_names
 local recipe_matches = Planner.recipe_matches
+local recipe_output_amount = Planner.recipe_output_amount
 local make_recipe_children = Planner.make_recipe_children
 
 local MAX_RECIPE_DEPTH = 12
@@ -24,6 +25,7 @@ local BLUEPRINT_STATUS_MESSAGES = {
   ready = "blueprint",
   invalid_multiplier = "invalid-multiplier",
   no_container = "no-container",
+  invalid_container = "invalid-container",
   over_capacity = "over-capacity",
   empty_plan = "empty-plan",
   inventory_full = "inventory-full",
@@ -59,6 +61,38 @@ local function safe_field(value, key)
   if not value then return nil end
   local ok, result = pcall(function() return value[key] end)
   if ok then return result end
+end
+
+local function is_blueprint_sandbox_item(prototype)
+  local group = safe_field(safe_field(prototype, "group"), "name")
+  local subgroup = safe_field(safe_field(prototype, "subgroup"), "name")
+  local function matches(name)
+    if type(name) ~= "string" then return false end
+    local normalized = name:lower():gsub("[^%w]", "")
+    return normalized:find("sandbox", 1, true) ~= nil
+      or normalized == "bpsb" or normalized:find("bpsb", 1, true) == 1
+  end
+  return matches(group) or matches(subgroup)
+end
+
+local function is_unsorted_item(prototype)
+  local group = safe_field(safe_field(prototype, "group"), "name")
+  local subgroup = safe_field(safe_field(prototype, "subgroup"), "name")
+  return group == nil or subgroup == nil or group == "other" or subgroup == "other"
+end
+
+local function selectable_item_names()
+  local names = {}
+  for name, prototype in pairs(prototypes.item) do
+    local hidden = safe_field(prototype, "hidden")
+    local parameter = safe_field(prototype, "parameter")
+    if not is_unsorted_item(prototype)
+      and not is_blueprint_sandbox_item(prototype)
+      and not hidden and not parameter then
+      names[#names + 1] = name
+    end
+  end
+  return names
 end
 
 local function add(parent, spec)
@@ -357,6 +391,7 @@ local function close_modal(player)
 end
 
 local function render_item_dialog(content, modal)
+  local item_names = selectable_item_names()
   local row = add(content, {
     type = "flow", name = "cip_modal_item_row", direction = "horizontal",
     style = "cip_card_horizontal_flow"
@@ -364,6 +399,7 @@ local function render_item_dialog(content, modal)
   add(row, { type = "label", caption = translated("item") })
   local chooser = add(row, {
     type = "choose-elem-button", name = "cip_modal_item", elem_type = "item-with-quality",
+    elem_filters = { { filter = "name", name = item_names } },
     tags = { action = "modal-item" }
   })
   chooser.elem_value = modal.item and { name = modal.item, quality = modal.quality or "normal" } or nil
@@ -657,7 +693,31 @@ local function on_gui_click(event)
         if node and make_recipe_children(data, node, tags.recipe) then
           close_modal(player)
           redraw_after_change(player)
+        else
+          local recipe = prototypes.recipe[tags.recipe]
+          local matching_products = {}
+          for _, product in ipairs(recipe and recipe.products or {}) do
+            if product.name == modal.item then
+              table.insert(matching_products, serpent.line({
+                amount = product.amount,
+                amount_min = product.amount_min,
+                amount_max = product.amount_max,
+                probability = product.probability,
+                independent_probability = product.independent_probability,
+                extra_count_fraction = product.extra_count_fraction
+              }))
+            end
+          end
+          log("[Container Item Planner] Recipe selection failed while expanding item. recipe=" .. tostring(tags.recipe)
+            .. ", item=" .. tostring(modal.item) .. ", line_id=" .. tostring(modal.line_id)
+            .. ", node_id=" .. tostring(modal.node_id) .. ", line_found=" .. tostring(line ~= nil)
+            .. ", node_found=" .. tostring(node ~= nil) .. ", output_amount=" ..
+            tostring(node and recipe_output_amount(recipe, node.item)) .. ", product_amount_data=" ..
+            table.concat(matching_products, "; "))
         end
+      else
+        log("[Container Item Planner] Recipe selection does not produce the expanded item. recipe=" ..
+          tostring(tags.recipe) .. ", item=" .. tostring(modal.item))
       end
     end
   elseif action == "modal-cancel" then
