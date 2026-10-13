@@ -645,7 +645,7 @@ local function on_gui_click(event)
   elseif action == "add-line" then
     local line = new_line(data)
     add_blueprint_contents_to_line(player, line, data)
-    table.insert(data.lines, line)
+    table.insert(data.lines, 1, line)
     redraw_after_change(player)
   elseif action == "settings" then
     set_modal_for_settings(player, element)
