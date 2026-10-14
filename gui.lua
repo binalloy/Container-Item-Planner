@@ -16,7 +16,7 @@ local totals_for = Planner.totals_for
 local capacity_for = Planner.capacity_for
 local filtered_totals = Planner.filtered_totals
 local blueprint_state = Planner.blueprint_state
-local sorted_item_names = Planner.sorted_item_names
+local item_names = Planner.item_names
 local recipe_matches = Planner.recipe_matches
 local recipe_output_amount = Planner.recipe_output_amount
 local make_recipe_children = Planner.make_recipe_children
@@ -120,7 +120,7 @@ end
 
 local function render_total_contents(total_frame, line)
   local totals = totals_for(line) or {}
-  local names = sorted_item_names(totals)
+  local names = item_names(totals)
   if #names == 0 then
     local empty_flow = add(total_frame, { type = "flow", direction = "horizontal" })
     empty_flow.style.padding = 12
@@ -286,13 +286,13 @@ local function render_line(parent, data, line)
     type = "scroll-pane",
     horizontal_scroll_policy = "dont-show-but-allow-scrolling",
   })
-  roots.style.width = 900
+  roots.style.minimal_width = 900
+  roots.style.maximal_width = 1200
   roots.style.minimal_height = 60
   -- roots.style.maximal_height = 190
   roots.style.top_margin = 8
   local root_flow = add(roots, { type = "flow", direction = "horizontal" })
   root_flow.style.horizontal_spacing = 2
-  for _, root in ipairs(line.roots) do render_node(root_flow, line, root, 0) end
   local add_item = add(root_flow, {
     type = "sprite-button", sprite = "utility/add", style = "green_button",
     tooltip = translated("add-item"), tags = { action = "add-item", line_id = line.id }
@@ -300,6 +300,7 @@ local function render_line(parent, data, line)
   add_item.style.width, add_item.style.height = 32, 32
   add_item.style.margin = 4
   add_item.style.padding = 4
+  for _, root in ipairs(line.roots) do render_node(root_flow, line, root, 0) end
 end
 
 local function render_main(player)
@@ -461,6 +462,15 @@ local function render_settings_dialog(content, modal)
   add(row, { type = "label", caption = translated("default-container") })
   add_container_selector(row, "cip_default_container", "default-container", nil,
     modal.container, modal.quality)
+  local import_requests_row = add(content, {
+    type = "flow", name = "cip_import_requests_row", direction = "horizontal",
+    style = "cip_card_horizontal_flow"
+  })
+  add(import_requests_row, {
+    type = "checkbox", name = "cip_import_blueprint_requests",
+    caption = translated("import-blueprint-requests"), state = modal.import_blueprint_requests,
+    tooltip = translated("import-blueprint-requests-tooltip")
+  })
 end
 
 local function render_modal(player)
@@ -591,7 +601,6 @@ local function set_modal_for_recipe(player, line_id, node, anchor)
   if not line then return end
   local options = {}
   for name in pairs(prototypes.recipe) do if recipe_matches(name, node.item) then options[#options + 1] = name end end
-  table.sort(options)
   if #options == 0 then player.print(translated("no-matching-recipes")); return end
   if #options == 1 then
     if make_recipe_children(data, node, options[1]) then redraw_after_change(player) end
@@ -610,6 +619,7 @@ local function set_modal_for_settings(player, anchor)
     kind = "settings",
     container = data.default_container or "iron-chest",
     quality = data.default_container_quality or "normal",
+    import_blueprint_requests = data.import_blueprint_requests ~= false,
     anchor = gui_anchor(anchor, player)
   }
   render_modal(player)
@@ -768,7 +778,7 @@ local function on_gui_click(event)
           make_recipe_children(data, node, node.recipe)
         end
       else
-        table.insert(line.roots, { id = add_node_id(data), item = item, quality = quality, amount = amount })
+        table.insert(line.roots, 1, { id = add_node_id(data), item = item, quality = quality, amount = amount })
       end
       close_modal(player)
       redraw_after_change(player)
@@ -789,6 +799,9 @@ local function on_gui_click(event)
       end
       data.default_container = selected_name
       data.default_container_quality = quality_from_selection(selected)
+      local import_requests = content and content["cip_import_requests_row"]
+        and content["cip_import_requests_row"]["cip_import_blueprint_requests"]
+      data.import_blueprint_requests = import_requests and import_requests.state or false
       close_modal(player)
       if player.gui.screen[GUI.frame] and player.gui.screen[GUI.frame].valid then
         player.opened = player.gui.screen[GUI.frame]

@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.1.4
+Date: 2026-10-15
+  Changes:
+    - Add a setting to import blueprint place items only or both place items and requested items.
+    - Import item requests from blueprints selected from a blueprint book.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.2
 Date: 2026-10-13
   Changes:

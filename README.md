@@ -9,7 +9,7 @@ Container Item Planner helps you plan the contents of a storage container and cr
 - Create multiple plans, each with its own title, multiplier, container, and item requests.
 - Expand requested items into recipe ingredients, including normal and recycling recipes.
 - Track item quality, filter item-quality pairs out of the blueprint, and check whether the remaining items fit the selected container.
-- Import item requests from a blueprint already on your cursor.
+- Import place items and, optionally, item requests from a blueprint on your cursor or selected from a blueprint book.
 - Generate a blueprint with the selected container and item insertion requests.
 
 Recipe expansion is manual at each level. Fluid ingredients can be viewed and expanded, but are not included in item totals or generated blueprints. Generated blueprints contain one container entity.

@@ -67,6 +67,7 @@ local function player_data(player_index)
   end
   data.default_container = data.default_container or "iron-chest"
   data.default_container_quality = data.default_container_quality or "normal"
+  if data.import_blueprint_requests == nil then data.import_blueprint_requests = true end
   return data
 end
 
@@ -118,60 +119,60 @@ end
 
 local function add_blueprint_contents_to_line(player, line, data)
   local cursor = player.cursor_stack
-  local is_blueprint = safe_field(cursor, "is_blueprint")
-  if not cursor or not safe_field(cursor, "valid_for_read") or not is_blueprint then return nil end
+  local source = player.cursor_record
+  if safe_field(source, "type") ~= "blueprint" then source = nil end
+  if not source and cursor and safe_field(cursor, "valid_for_read") and safe_field(cursor, "is_blueprint") then
+    source = cursor
+  end
+  if not source then return nil end
 
-  local ok, entities = pcall(function() return cursor.get_blueprint_entities() end)
+  local ok, entities = pcall(function() return source.get_blueprint_entities() end)
   if not ok or type(entities) ~= "table" then
     log("[Container Item Planner] Could not read entities from held blueprint: " .. tostring(entities))
     return 0
   end
 
-  local totals = {}
+  local totals, ordered_keys = {}, {}
   local function add_total(item_name, quality, amount)
     local item_prototype = prototypes.item[item_name]
     if not is_selectable_item(item_prototype) or type(amount) ~= "number" or amount <= 0 then return end
     quality = quality or "normal"
     local key = item_name .. "\0" .. quality
+    if totals[key] == nil then ordered_keys[#ordered_keys + 1] = key end
     totals[key] = (totals[key] or 0) + amount
   end
 
   for _, entity in ipairs(entities) do
-    local imported_requests = false
-    for _, request in ipairs(entity.items or {}) do
-      local id = request.id or {}
-      local positions = request.items or {}
-      local amount = tonumber(positions.grid_count) or 0
-      for _, position in ipairs(positions.in_inventory or {}) do
-        amount = amount + (tonumber(position.count) or 1)
-      end
-      if amount > 0 then
-        add_total(id.name, id.quality, amount)
-        imported_requests = true
+    if data.import_blueprint_requests ~= false then
+      for _, request in ipairs(entity.items or {}) do
+        local id = request.id or {}
+        local positions = request.items or {}
+        local amount = tonumber(positions.grid_count) or 0
+        for _, position in ipairs(positions.in_inventory or {}) do
+          amount = amount + (tonumber(position.count) or 1)
+        end
+        if amount > 0 then add_total(id.name, id.quality, amount) end
       end
     end
 
-    -- Import place items for entities without their own explicit item requests.
-    if not imported_requests then
-      local entity_prototype = prototypes.entity[entity.name]
-      local place_items = entity_prototype and safe_field(entity_prototype, "items_to_place_this")
-      local place_item = place_items and place_items[1]
-      if place_item then
-        add_total(place_item.name, entity.quality, place_item.count or 1)
-      end
+    -- Place items are always imported; request imports are an optional addition.
+    local entity_prototype = prototypes.entity[entity.name]
+    local place_items = entity_prototype and safe_field(entity_prototype, "items_to_place_this")
+    local place_item = place_items and place_items[1]
+    if place_item then
+      add_total(place_item.name, entity.quality, place_item.count or 1)
     end
   end
 
-  local keys = {}
-  for key in pairs(totals) do keys[#keys + 1] = key end
-  table.sort(keys)
   local count = 0
-  for _, key in ipairs(keys) do
+  -- Prepend imported items in blueprint order, ahead of existing roots.
+  for index = #ordered_keys, 1, -1 do
+    local key = ordered_keys[index]
     local amount = totals[key]
     local item_name, quality = key:match("^(.-)%z(.*)$")
-    line.roots[#line.roots + 1] = {
+    table.insert(line.roots, 1, {
       id = add_node_id(data), item = item_name, quality = quality, amount = amount
-    }
+    })
     count = count + amount
   end
   if count == 0 then
@@ -230,7 +231,6 @@ local function container_options()
       })
     end
   end
-  table.sort(result, function(a,b) return a.name < b.name end)
   return result
 end
 
@@ -299,15 +299,9 @@ local function blueprint_state(line)
   return "ready", totals
 end
 
-local function sorted_item_names(totals)
+local function item_names(totals)
   local names = {}
   for key in pairs(totals) do table.insert(names, key) end
-  table.sort(names, function(a, b)
-    local ai, aq = a:match("^(.-)%z(.*)$")
-    local bi, bq = b:match("^(.-)%z(.*)$")
-    if ai == bi then return aq < bq end
-    return ai < bi
-  end)
   return names
 end
 
@@ -437,7 +431,7 @@ local function create_blueprint(player, line)
   local slot_count = chosen.slots
   local slot_index = 0
   local insert_plans = {}
-  for _, key in ipairs(sorted_item_names(items)) do
+  for _, key in ipairs(item_names(items)) do
     local name, quality = key:match("^(.-)%z(.*)$")
     local amount = items[key]
     local stack_size = prototypes.item[name].stack_size or 1
@@ -493,7 +487,7 @@ Planner.totals_for = totals_for
 Planner.capacity_for = capacity_for
 Planner.filtered_totals = filtered_totals
 Planner.blueprint_state = blueprint_state
-Planner.sorted_item_names = sorted_item_names
+Planner.item_names = item_names
 Planner.recipe_output_amount = recipe_output_amount
 Planner.recipe_matches = recipe_matches
 Planner.ingredient_amount = ingredient_amount
