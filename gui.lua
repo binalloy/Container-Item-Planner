@@ -836,19 +836,16 @@ local function on_gui_click(event)
         set_modal_for_recipe(player, tags.line_id, node, element)
       end
     elseif event.button == defines.mouse_button_type.right then
-      if (tags.depth or 0) > 0 then
-        node.excluded = not node.excluded
-        redraw_after_change(player)
-        return
-      end
-      local function remove_node(siblings, id)
-        for index, candidate in ipairs(siblings) do
-          if candidate.id == id then table.remove(siblings, index); return true end
-          if remove_node(candidate.children or {}, id) then return true end
+      if (tags.depth or 0) == 0 and event.shift then
+        for index, root in ipairs(line.roots) do
+          if root.id == node.id then
+            table.remove(line.roots, index)
+            break
+          end
         end
-        return false
+      else
+        node.excluded = not node.excluded
       end
-      remove_node(line.roots, node.id)
       redraw_after_change(player)
     elseif (tags.depth or 0) > 0 then
       return
